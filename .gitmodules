@@ -1,0 +1,6 @@
+[submodule "inet"]
+	path = inet
+	url = https://github.com/inet-framework/inet.git
+[submodule "veins"]
+	path = veins
+	url = https://github.com/sommer/veins.git
