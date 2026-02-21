@@ -1,6 +1,8 @@
 [submodule "inet"]
 	path = inet
 	url = https://github.com/inet-framework/inet.git
+	ignore = untracked
 [submodule "veins"]
 	path = veins
 	url = https://github.com/sommer/veins.git
+	ignore = untracked
