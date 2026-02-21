@@ -5,7 +5,7 @@
 
 using namespace inet;
 
-namespace veins_qos::veins_inet {
+namespace veins_qos::traffic {
 
 Define_Module(VeinsInetCritTrafficApp);
 
@@ -89,4 +89,4 @@ void VeinsInetCritTrafficApp::processPacket(std::shared_ptr<Packet> pk)
     // EV_INFO << "RX " << pk->getName() << " from " << src << "\n";
 }
 
-} // namespace veins_qos::veins_inet
+} // namespace veins_qos::traffic

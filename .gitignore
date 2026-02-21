@@ -10,3 +10,4 @@ results/
 results/**
 *.qtenvrc
 *.elog
+*/out

@@ -3,7 +3,7 @@
 #include "veins_inet/VeinsInetApplicationBase.h"
 #include "inet/common/packet/Packet.h"
 
-namespace veins_qos::veins_inet {
+namespace veins_qos::traffic {
 
 class VeinsInetCritTrafficApp : public veins::VeinsInetApplicationBase
 {
@@ -37,4 +37,4 @@ class VeinsInetCritTrafficApp : public veins::VeinsInetApplicationBase
     void clearCrash();
 };
 
-} // namespace veins_qos::veins_inet
+} // namespace veins_qos::traffic
