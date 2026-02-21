@@ -1,6 +1,6 @@
 package veins_qos.traffic;
 
-import veins_inet.VeinsInetApplicationBase;
+import veins_qos.veins_inet.VeinsInetApplicationBase;
 
 simple VeinsInetCritTrafficApp extends VeinsInetApplicationBase
 {
@@ -15,7 +15,7 @@ simple VeinsInetCritTrafficApp extends VeinsInetApplicationBase
         double sendInterval @unit(s) = default(0.1s);        // BE period
         double crashSendInterval @unit(s) = default(0.01s);  // VO period while crashActive
 
-        int payloadBytes = default(200B);
+        int payloadBytes = default(200);
 
         @display("i=block/app");
 }
