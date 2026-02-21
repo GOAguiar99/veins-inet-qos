@@ -1,7 +1,8 @@
-#include "veins_inet/VeinsInetCritTrafficApp.h"
+#include "./VeinsInetCritTrafficApp.h"
 
 #include "inet/linklayer/common/UserPriorityTag_m.h"   // UserPriorityReq
 #include "inet/networklayer/common/L3AddressTag_m.h"
+#include "inet/common/packet/chunk/ByteCountChunk.h"
 
 using namespace inet;
 
@@ -59,7 +60,7 @@ void VeinsInetCritTrafficApp::sendOne()
         ->setUserPriority(crashActive ? UP_VO : UP_BE);
 
     // Dummy payload (size matters for airtime)
-    const auto payload = makeShared<BytesChunk>(B(payloadBytes));
+    const auto payload = makeShared<ByteCountChunk>(B(payloadBytes));
     pk->insertAtBack(payload);
 
     sendPacket(std::move(pk));
