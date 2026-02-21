@@ -1,3 +1,10 @@
 # OMNeT++
 omnetpp-*/
 omnetpp/
+ap_servers/
+*.vci
+*.sca
+*.vec
+# OMNeT++ results
+results/
+results/**
