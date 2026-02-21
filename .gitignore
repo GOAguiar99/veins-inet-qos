@@ -8,3 +8,5 @@ ap_servers/
 # OMNeT++ results
 results/
 results/**
+*.qtenvrc
+*.elog
