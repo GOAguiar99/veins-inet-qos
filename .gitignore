@@ -1,13 +1,45 @@
-# OMNeT++
+# IDE and editor settings
+.vscode/
+.idea/
+.settings/
+*.code-workspace
+.project
+.cproject
+.pydevproject
+
+# OS/editor temp files
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Build/output folders
+out/
+*/out/
+**/out/
+build/
+*/build/
+**/build/
+bin/
+*/bin/
+**/bin/
+obj/
+*/obj/
+**/obj/
+Debug/
+Release/
+
+# OMNeT++ local installs/workspaces
 omnetpp-*/
 omnetpp/
 ap_servers/
+
+# OMNeT++ results/logs
+results/
+**/results/
 *.vci
 *.sca
 *.vec
-# OMNeT++ results
-results/
-results/**
 *.qtenvrc
 *.elog
-*/out
