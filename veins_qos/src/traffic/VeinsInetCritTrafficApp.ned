@@ -5,6 +5,7 @@ import veins_qos.veins_inet.VeinsInetApplicationBase;
 simple VeinsInetCritTrafficApp extends VeinsInetApplicationBase
 {
     parameters:
+        @class(veins_qos::traffic::VeinsInetCritTrafficApp);
         // crash behavior
         bool crashEnabled = default(false);
         bool stopVehicleOnCrash = default(false);

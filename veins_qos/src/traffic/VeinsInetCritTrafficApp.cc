@@ -27,6 +27,10 @@ bool VeinsInetCritTrafficApp::startApplication()
         timerManager.create(veins::TimerSpecification([this]() { triggerCrash(); })
                                 .oneshotAt(crashTime));
     }
+    EV_INFO << "VeinsInetCritTrafficApp started: sendInterval=" << sendInterval
+            << " crashSendInterval=" << crashSendInterval
+            << " payloadBytes=" << payloadBytes
+            << " crashEnabled=" << crashEnabled << endl;
     return true;
 }
 
@@ -63,6 +67,11 @@ void VeinsInetCritTrafficApp::sendOne()
     const auto payload = makeShared<ByteCountChunk>(B(payloadBytes));
     pk->insertAtBack(payload);
 
+    EV_INFO << "TX " << pk->getName()
+            << " bytes=" << payloadBytes
+            << " up=" << (crashActive ? UP_VO : UP_BE)
+            << " t=" << simTime() << endl;
+
     sendPacket(std::move(pk));
 }
 
@@ -85,9 +94,8 @@ void VeinsInetCritTrafficApp::clearCrash()
 
 void VeinsInetCritTrafficApp::processPacket(std::shared_ptr<Packet> pk)
 {
-    // optional: keep empty if you don't care about RX
-    // auto src = pk->getTag<L3AddressInd>()->getSrcAddress();
-    // EV_INFO << "RX " << pk->getName() << " from " << src << "\n";
+    auto src = pk->getTag<L3AddressInd>()->getSrcAddress();
+    EV_INFO << "RX " << pk->getName() << " from " << src << " t=" << simTime() << endl;
 }
 
 } // namespace veins_qos::traffic
