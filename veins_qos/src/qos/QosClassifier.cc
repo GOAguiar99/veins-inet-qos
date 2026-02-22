@@ -1,6 +1,10 @@
 #include "QosClassifier.h"
+
 #include <cstring>
+
+#include "inet/common/ProtocolTag_m.h"
 #include "inet/networklayer/common/DscpTag_m.h"
+#include "inet/linklayer/common/UserPriorityTag_m.h"
 
 namespace veins_qos::qos {
 
@@ -8,36 +12,62 @@ Define_Module(QosClassifier);
 
 void QosClassifier::initialize()
 {
-    crashDscp = par("crashDscp").intValue(); // default 46 in NED
+    crashDscp = par("crashDscp").intValue(); // e.g., 46
+    defaultUp = par("defaultUp").intValue(); // e.g., inet::UP_BE (0)
 }
 
+// Robust DSCP extraction for classification:
+// 1) Prefer indication (post-processing / already-decoded)
+// 2) Then request (set by app / upper layers)
+// 3) Optional: parse IPv4/IPv6 only if we can safely identify it at the front
 int QosClassifier::getDscp(inet::Packet *pkt) const
 {
-    // Prefer explicit DSCP request tag set by upper layers/apps.
+    if (pkt == nullptr) return -1;
+
+    // Most reliable after network-layer processing
+    if (const auto dscpInd = pkt->findTag<inet::DscpInd>())
+        return dscpInd->getDifferentiatedServicesCodePoint();
+
+    // Most reliable before network-layer encapsulation (your app sets this)
     if (const auto dscpReq = pkt->findTag<inet::DscpReq>())
         return dscpReq->getDifferentiatedServicesCodePoint();
 
-    const inet::Ptr<const inet::PacketProtocolTag> protoTag = pkt->findTag<inet::PacketProtocolTag>();
+    // Fallback: only attempt header parsing if the protocol tag says
+    // the network header is at the front of the packet.
+    const auto protoTag = pkt->findTag<inet::PacketProtocolTag>();
     if (!protoTag)
         return -1;
 
     const inet::Protocol *proto = protoTag->getProtocol();
 
-    if (proto == &inet::Protocol::ipv4) {
-        auto ipv4 = pkt->peekAtFront<inet::Ipv4Header>();
-        return ipv4->getDscp();
+    try {
+        if (proto == &inet::Protocol::ipv4) {
+            const auto ipv4 = pkt->peekAtFront<inet::Ipv4Header>();
+            return ipv4->getDscp();
+        }
+        else if (proto == &inet::Protocol::ipv6) {
+            const auto ipv6 = pkt->peekAtFront<inet::Ipv6Header>();
+            // DSCP = top 6 bits of Traffic Class
+            return static_cast<int>((ipv6->getTrafficClass() & 0xFF) >> 2);
+        }
     }
-    else if (proto == &inet::Protocol::ipv6) {
-        auto ipv6 = pkt->peekAtFront<inet::Ipv6Header>();
-        return ipv6->getTrafficClass() >> 2;
+    catch (const omnetpp::cRuntimeError&) {
+        // Not at front / not present; treat as unknown DSCP
+        return -1;
     }
-    return -1; // non-IP
+
+    return -1;
 }
 
 int QosClassifier::mapDscpToUp(int dscp) const
 {
-    // only what you asked: BE or VO
-    return (dscp == crashDscp) ? inet::UP_VO : inet::UP_BE;
+    // Minimal two-class policy:
+    // - crash DSCP -> VO
+    // - unknown / everything else -> defaultUp (typically BE)
+    if (dscp == crashDscp)
+        return inet::UP_VO;
+
+    return defaultUp;
 }
 
 void QosClassifier::handleMessage(omnetpp::cMessage *msg)
@@ -47,7 +77,15 @@ void QosClassifier::handleMessage(omnetpp::cMessage *msg)
     const int dscp = getDscp(pkt);
     const int up   = mapDscpToUp(dscp);
 
-    pkt->addTagIfAbsent<inet::UserPriorityReq>()->setUserPriority(up);
+    // Only add/override if needed; avoid repeatedly rewriting tags
+    auto upTag = pkt->addTagIfAbsent<inet::UserPriorityReq>();
+    if (upTag->getUserPriority() != up)
+        upTag->setUserPriority(up);
+
+    // (Optional) also annotate the DSCP we used, if none existed
+    // This helps debugging downstream without changing already-present DSCP tags.
+    if (dscp >= 0 && !pkt->hasTag<inet::DscpReq>() && !pkt->hasTag<inet::DscpInd>())
+        pkt->addTagIfAbsent<inet::DscpReq>()->setDifferentiatedServicesCodePoint(dscp);
 
     send(pkt, "out");
 }

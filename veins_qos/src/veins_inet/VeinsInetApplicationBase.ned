@@ -29,6 +29,8 @@ simple VeinsInetApplicationBase like IApp
     parameters:
         string interfaceTableModule;   // The path to the InterfaceTable module
         string interface = default("wlan0");  // The interface name of where to send packets (via multicast)
+        int localPort = default(9001);
+        int destPort = default(9001);
 
         @display("i=block/app");
         @class(veins::VeinsInetApplicationBase);

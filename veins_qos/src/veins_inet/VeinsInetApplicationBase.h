@@ -43,7 +43,8 @@ protected:
     veins::TimerManager timerManager{this};
 
     inet::L3Address destAddress;
-    const int portNumber = 9001;
+    int localPort = 9001;
+    int destPort = 9001;
     inet::UdpSocket socket;
 
 protected:

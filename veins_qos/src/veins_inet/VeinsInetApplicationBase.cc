@@ -67,9 +67,11 @@ void VeinsInetApplicationBase::handleStartOperation(LifecycleOperation* operatio
 
     L3AddressResolver().tryResolve("224.0.0.1", destAddress);
     ASSERT(!destAddress.isUnspecified());
+    localPort = par("localPort").intValue();
+    destPort = par("destPort").intValue();
 
     socket.setOutputGate(gate("socketOut"));
-    socket.bind(L3Address(), portNumber);
+    socket.bind(localPort);
 
     const char* interface = par("interface");
     ASSERT(interface[0]);
@@ -187,7 +189,7 @@ void VeinsInetApplicationBase::timestampPayload(inet::Ptr<inet::Chunk> payload)
 void VeinsInetApplicationBase::sendPacket(std::unique_ptr<inet::Packet> pk)
 {
     emit(packetSentSignal, pk.get());
-    socket.sendTo(pk.release(), destAddress, portNumber);
+    socket.sendTo(pk.release(), destAddress, destPort);
 }
 
 std::unique_ptr<inet::Packet> VeinsInetApplicationBase::createPacket(std::string name)
