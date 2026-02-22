@@ -1,5 +1,6 @@
 #include "CritPacketSender.h"
 
+#include "inet/common/SequenceNumberTag_m.h"
 #include "inet/common/TimeTag_m.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
 #include "inet/networklayer/common/DscpTag_m.h"
@@ -30,6 +31,7 @@ bool CritPacketSender::startApplication()
     payloadBytes = par("payloadBytes").intValue();
     dscp         = par("dscp").intValue();
     packetName   = par("packetName").stdstringValue();
+    voDedupWindow = par("voDedupWindow");
     selfAddress  = L3AddressResolver().addressOf(getParentModule(), "wlan0");
 
     ++gen; // reset any previous chain (defensive)
@@ -41,6 +43,7 @@ bool CritPacketSender::startApplication()
             << " sendInterval=" << sendInterval
             << " payloadBytes=" << payloadBytes
             << " dscp=" << dscp
+            << " voDedupWindow=" << voDedupWindow
             << " selfAddress=" << selfAddress
             << " packetName=" << packetName
             << endl;
@@ -55,6 +58,7 @@ bool CritPacketSender::startApplication()
 bool CritPacketSender::stopApplication()
 {
     ++gen; // cancel current periodic chain
+    voDedupSeen.clear();
     return true;
 }
 
@@ -118,11 +122,18 @@ void CritPacketSender::processPacket(std::shared_ptr<Packet> pk)
     if (const auto srcTag = pk->findTag<L3AddressInd>())
         src = srcTag->getSrcAddress();
 
+    int seq = -1;
+    if (const auto seqInd = pk->findTag<SequenceNumberInd>())
+        seq = seqInd->getSequenceNumber();
+    else if (const auto seqReq = pk->findTag<SequenceNumberReq>())
+        seq = seqReq->getSequenceNumber();
+
     const bool isSelfOrigin = !src.isUnspecified() && src == selfAddress;
 
     EV_INFO << "RX " << pk->getName()
             << " from " << src
             << " dscp=" << rxDscp
+            << " seq=" << seq
             << " delay=" << (hasCreationTime ? delay : SIMTIME_ZERO)
             << " selfOrigin=" << (isSelfOrigin ? "yes" : "no")
             << " t=" << simTime()
@@ -132,11 +143,30 @@ void CritPacketSender::processPacket(std::shared_ptr<Packet> pk)
     if (isSelfOrigin)
         return;
 
+    if (voDedupWindow > SIMTIME_ZERO) {
+        for (auto it = voDedupSeen.begin(); it != voDedupSeen.end();) {
+            if (it->second + voDedupWindow < simTime())
+                it = voDedupSeen.erase(it);
+            else
+                ++it;
+        }
+    }
+
     if (rxDscp == kDscpBe) {
         emit(kBeRxPacketCountSignal, 1L);
         if (hasCreationTime) emit(kBeE2eDelaySignal, delay);
     }
     else if (rxDscp == kDscpVo) {
+        if (voDedupWindow > SIMTIME_ZERO && seq >= 0 && !src.isUnspecified()) {
+            auto key = std::make_pair(src.str(), seq);
+            auto it = voDedupSeen.find(key);
+            if (it != voDedupSeen.end()) {
+                EV_DEBUG << "Skipping duplicate VO packet src=" << src << " seq=" << seq << endl;
+                return;
+            }
+            voDedupSeen[key] = simTime();
+        }
+
         emit(kVoRxPacketCountSignal, 1L);
         if (hasCreationTime) emit(kVoE2eDelaySignal, delay);
     }

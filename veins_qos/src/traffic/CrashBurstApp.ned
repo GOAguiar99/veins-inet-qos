@@ -19,6 +19,9 @@ simple CrashBurstApp extends VeinsInetApplicationBase
         // VO traffic during crash window (DSCP=46)
         double sendInterval @unit(s) = default(100ms);
         int payloadBytes = default(200);
+        int repeatCount = default(3);
+        double repeatGap @unit(s) = default(20ms);
+        double repeatJitter @unit(s) = default(5ms);
 
         string packetName = default("accident_vo");
 
