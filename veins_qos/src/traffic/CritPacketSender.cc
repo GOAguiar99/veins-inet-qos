@@ -4,6 +4,7 @@
 #include "inet/common/packet/chunk/ByteCountChunk.h"
 #include "inet/networklayer/common/DscpTag_m.h"
 #include "inet/networklayer/common/L3AddressTag_m.h"
+#include "inet/networklayer/common/L3AddressResolver.h"
 
 using namespace inet;
 
@@ -29,6 +30,7 @@ bool CritPacketSender::startApplication()
     payloadBytes = par("payloadBytes").intValue();
     dscp         = par("dscp").intValue();
     packetName   = par("packetName").stdstringValue();
+    selfAddress  = L3AddressResolver().addressOf(getParentModule(), "wlan0");
 
     ++gen; // reset any previous chain (defensive)
 
@@ -39,6 +41,7 @@ bool CritPacketSender::startApplication()
             << " sendInterval=" << sendInterval
             << " payloadBytes=" << payloadBytes
             << " dscp=" << dscp
+            << " selfAddress=" << selfAddress
             << " packetName=" << packetName
             << endl;
 
@@ -115,12 +118,19 @@ void CritPacketSender::processPacket(std::shared_ptr<Packet> pk)
     if (const auto srcTag = pk->findTag<L3AddressInd>())
         src = srcTag->getSrcAddress();
 
+    const bool isSelfOrigin = !src.isUnspecified() && src == selfAddress;
+
     EV_INFO << "RX " << pk->getName()
             << " from " << src
             << " dscp=" << rxDscp
             << " delay=" << (hasCreationTime ? delay : SIMTIME_ZERO)
+            << " selfOrigin=" << (isSelfOrigin ? "yes" : "no")
             << " t=" << simTime()
             << endl;
+
+    // Multicast is also delivered locally; exclude looped-back self traffic from e2e KPIs.
+    if (isSelfOrigin)
+        return;
 
     if (rxDscp == kDscpBe) {
         emit(kBeRxPacketCountSignal, 1L);

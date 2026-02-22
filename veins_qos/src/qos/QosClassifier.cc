@@ -14,6 +14,9 @@ void QosClassifier::initialize()
 {
     crashDscp = par("crashDscp").intValue(); // e.g., 46
     defaultUp = par("defaultUp").intValue(); // e.g., inet::UP_BE (0)
+    EV_INFO << "QosClassifier init: crashDscp=" << crashDscp
+            << ", defaultUp=" << defaultUp
+            << ", voiceUp=" << inet::UP_VO << "\n";
 }
 
 // Robust DSCP extraction for classification:
@@ -79,13 +82,25 @@ void QosClassifier::handleMessage(omnetpp::cMessage *msg)
 
     // Only add/override if needed; avoid repeatedly rewriting tags
     auto upTag = pkt->addTagIfAbsent<inet::UserPriorityReq>();
-    if (upTag->getUserPriority() != up)
+    const int oldUp = upTag->getUserPriority();
+    const bool upChanged = oldUp != up;
+    if (upChanged)
         upTag->setUserPriority(up);
 
     // (Optional) also annotate the DSCP we used, if none existed
     // This helps debugging downstream without changing already-present DSCP tags.
     if (dscp >= 0 && !pkt->hasTag<inet::DscpReq>() && !pkt->hasTag<inet::DscpInd>())
         pkt->addTagIfAbsent<inet::DscpReq>()->setDifferentiatedServicesCodePoint(dscp);
+
+    EV_INFO << "QoS classify pkt=" << pkt->getFullName()
+            << " id=" << pkt->getId()
+            << " dscp=" << dscp
+            << " crashDscp=" << crashDscp
+            << " upOld=" << oldUp
+            << " upNew=" << up
+            << " upChanged=" << (upChanged ? "yes" : "no")
+            << " voice=" << (up == inet::UP_VO ? "yes" : "no")
+            << "\n";
 
     send(pkt, "out");
 }

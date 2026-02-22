@@ -4,6 +4,7 @@
 
 #include "veins_inet/VeinsInetApplicationBase.h"
 #include "inet/common/packet/Packet.h"
+#include "inet/networklayer/common/L3Address.h"
 
 namespace veins_qos::traffic {
 
@@ -24,6 +25,7 @@ class CritPacketSender : public veins::VeinsInetApplicationBase
     int payloadBytes = 0;
     int dscp = 0;
     std::string packetName;
+    inet::L3Address selfAddress;
 
     // state
     uint64_t gen = 0; // cancels old timer chain when stopping

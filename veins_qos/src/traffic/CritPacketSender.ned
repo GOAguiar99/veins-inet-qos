@@ -16,8 +16,8 @@ simple CritPacketSender extends VeinsInetApplicationBase
         @statistic[beTxPackets](title="BE transmitted packets"; source=beTxPacketCount; record=count; interpolationmode=none);
         @statistic[beRxPackets](title="BE received packets"; source=beRxPacketCount; record=count; interpolationmode=none);
         @statistic[voRxPackets](title="VO received packets"; source=voRxPacketCount; record=count; interpolationmode=none);
-        @statistic[beEndToEndDelay](title="BE end-to-end delay"; unit=s; source=beE2eDelay; record=vector,mean,min,max);
-        @statistic[voEndToEndDelay](title="VO end-to-end delay"; unit=s; source=voE2eDelay; record=vector,mean,min,max);
+        @statistic[beEndToEndDelay](title="BE end-to-end delay"; unit=s; source=beE2eDelay; record=vector,count,mean,min,max);
+        @statistic[voEndToEndDelay](title="VO end-to-end delay"; unit=s; source=voE2eDelay; record=vector,count,mean,min,max);
 
         bool enabled = default(true);
 
