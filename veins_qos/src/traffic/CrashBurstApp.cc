@@ -10,6 +10,7 @@ namespace veins_qos::traffic {
 Define_Module(CrashBurstApp);
 
 namespace {
+constexpr int kDscpVo = 46;
 const simsignal_t kVoTxPacketCountSignal = cComponent::registerSignal("voTxPacketCount");
 } // namespace
 
@@ -18,7 +19,7 @@ bool CrashBurstApp::startApplication()
     targetNodeIndex = par("targetNodeIndex").intValue();
     crashAt = par("crashAt");
     resumeAfter = par("resumeAfter");
-    burstPackets = par("burstPackets").intValue();
+    sendInterval = par("sendInterval");
     payloadBytes = par("payloadBytes").intValue();
     packetName = par("packetName").stdstringValue();
     const int myIndex = getParentModule()->getIndex();
@@ -29,7 +30,7 @@ bool CrashBurstApp::startApplication()
             << " targetNodeIndex=" << targetNodeIndex
             << " crashAt=" << crashAt
             << " resumeAfter=" << resumeAfter
-            << " burstPackets=" << burstPackets
+            << " sendInterval=" << sendInterval
             << " payloadBytes=" << payloadBytes
             << endl;
 
@@ -66,6 +67,8 @@ bool CrashBurstApp::startApplication()
 
 bool CrashBurstApp::stopApplication()
 {
+    ++txGen; // cancel periodic VO traffic chain
+    crashActive = false;
     return true;
 }
 
@@ -76,8 +79,8 @@ void CrashBurstApp::triggerCrash()
 
     EV_WARN << "CRASH TRIGGER"
             << " t=" << simTime()
-            << " sending burstPackets=" << burstPackets
-            << " dscp=46"
+            << " starting periodic VO traffic"
+            << " dscp=" << kDscpVo
             << endl;
 
     getParentModule()->getDisplayString().setTagArg("i", 1, "red");
@@ -86,7 +89,7 @@ void CrashBurstApp::triggerCrash()
         traciVehicle->setSpeed(0);
     }
 
-    sendBurst();
+    startCrashTraffic();
 
     if (resumeAfter > SIMTIME_ZERO) {
         timerManager.create(
@@ -96,27 +99,52 @@ void CrashBurstApp::triggerCrash()
     }
 }
 
-void CrashBurstApp::sendBurst()
+void CrashBurstApp::startCrashTraffic()
 {
-    for (int i = 0; i < burstPackets; ++i) {
-        auto pk = createPacket(packetName.c_str());
-
-        pk->addTagIfAbsent<DscpReq>()->setDifferentiatedServicesCodePoint(46);
-
-        const auto payload = makeShared<ByteCountChunk>(B(payloadBytes));
-        timestampPayload(payload);
-        pk->insertAtBack(payload);
-
-        EV_INFO << "TX " << pk->getName()
-                << " seq=" << i
-                << " bytes=" << payloadBytes
-                << " dscp=46"
-                << " t=" << simTime()
+    if (sendInterval <= SIMTIME_ZERO) {
+        EV_WARN << "VO traffic disabled because sendInterval <= 0"
+                << " sendInterval=" << sendInterval
                 << endl;
-
-        sendPacket(std::move(pk));
-        emit(kVoTxPacketCountSignal, 1L);
+        return;
     }
+
+    crashActive = true;
+    const uint64_t myGen = ++txGen;
+
+    // Start immediately at crash time, then keep periodic cadence.
+    sendOne();
+    scheduleNext(myGen);
+}
+
+void CrashBurstApp::scheduleNext(uint64_t myGen)
+{
+    timerManager.create(
+        veins::TimerSpecification([this, myGen]() {
+            if (myGen != txGen || !crashActive) return;
+            sendOne();
+            scheduleNext(myGen);
+        }).oneshotIn(sendInterval)
+    );
+}
+
+void CrashBurstApp::sendOne()
+{
+    auto pk = createPacket(packetName.c_str());
+
+    pk->addTagIfAbsent<DscpReq>()->setDifferentiatedServicesCodePoint(kDscpVo);
+
+    const auto payload = makeShared<ByteCountChunk>(B(payloadBytes));
+    timestampPayload(payload);
+    pk->insertAtBack(payload);
+
+    EV_INFO << "TX " << pk->getName()
+            << " bytes=" << payloadBytes
+            << " dscp=" << kDscpVo
+            << " t=" << simTime()
+            << endl;
+
+    sendPacket(std::move(pk));
+    emit(kVoTxPacketCountSignal, 1L);
 }
 
 void CrashBurstApp::processPacket(std::shared_ptr<Packet> pk)
@@ -129,6 +157,9 @@ void CrashBurstApp::resumeVehicle()
     EV_WARN << "CRASH RESUME"
             << " t=" << simTime()
             << endl;
+
+    crashActive = false;
+    ++txGen; // stop periodic VO traffic
 
     if (traciVehicle) {
         traciVehicle->setSpeed(-1);
