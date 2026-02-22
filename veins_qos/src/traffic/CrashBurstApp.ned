@@ -6,6 +6,10 @@ simple CrashBurstApp extends VeinsInetApplicationBase
 {
     parameters:
         @class(veins_qos::traffic::CrashBurstApp);
+
+        @signal[voTxPacketCount](type=long);
+        @statistic[voTxPackets](title="VO transmitted packets"; source=voTxPacketCount; record=count; interpolationmode=none);
+
         // only this OMNeT++ node index triggers the crash burst; -1 means all nodes
         int targetNodeIndex = default(0);
         // crash timing (absolute simulation time)

@@ -11,6 +11,17 @@ namespace veins_qos::traffic {
 
 Define_Module(CritPacketSender);
 
+namespace {
+constexpr int kDscpBe = 0;
+constexpr int kDscpVo = 46;
+
+const simsignal_t kBeTxPacketCountSignal = cComponent::registerSignal("beTxPacketCount");
+const simsignal_t kBeRxPacketCountSignal = cComponent::registerSignal("beRxPacketCount");
+const simsignal_t kVoRxPacketCountSignal = cComponent::registerSignal("voRxPacketCount");
+const simsignal_t kBeE2eDelaySignal = cComponent::registerSignal("beE2eDelay");
+const simsignal_t kVoE2eDelaySignal = cComponent::registerSignal("voE2eDelay");
+} // namespace
+
 bool CritPacketSender::startApplication()
 {
     enabled      = par("enabled").boolValue();
@@ -80,6 +91,7 @@ void CritPacketSender::sendOne()
             << endl;
 
     sendPacket(std::move(pk));
+    emit(kBeTxPacketCountSignal, 1L);
 }
 
 void CritPacketSender::processPacket(std::shared_ptr<Packet> pk)
@@ -109,6 +121,15 @@ void CritPacketSender::processPacket(std::shared_ptr<Packet> pk)
             << " delay=" << (hasCreationTime ? delay : SIMTIME_ZERO)
             << " t=" << simTime()
             << endl;
+
+    if (rxDscp == kDscpBe) {
+        emit(kBeRxPacketCountSignal, 1L);
+        if (hasCreationTime) emit(kBeE2eDelaySignal, delay);
+    }
+    else if (rxDscp == kDscpVo) {
+        emit(kVoRxPacketCountSignal, 1L);
+        if (hasCreationTime) emit(kVoE2eDelaySignal, delay);
+    }
 }
 
 } // namespace veins_qos::traffic

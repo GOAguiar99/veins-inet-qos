@@ -9,6 +9,10 @@ namespace veins_qos::traffic {
 
 Define_Module(CrashBurstApp);
 
+namespace {
+const simsignal_t kVoTxPacketCountSignal = cComponent::registerSignal("voTxPacketCount");
+} // namespace
+
 bool CrashBurstApp::startApplication()
 {
     targetNodeIndex = par("targetNodeIndex").intValue();
@@ -111,6 +115,7 @@ void CrashBurstApp::sendBurst()
                 << endl;
 
         sendPacket(std::move(pk));
+        emit(kVoTxPacketCountSignal, 1L);
     }
 }
 
