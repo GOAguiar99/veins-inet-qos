@@ -1,5 +1,8 @@
 #pragma once
 
+#include <map>
+#include <string>
+
 #include <omnetpp.h>
 
 #include "veins_inet/VeinsInetApplicationBase.h"
@@ -26,9 +29,11 @@ class CritPacketSender : public veins::VeinsInetApplicationBase
     int dscp = 0;
     std::string packetName;
     inet::L3Address selfAddress;
+    simtime_t voDedupWindow = SIMTIME_ZERO;
 
     // state
     uint64_t gen = 0; // cancels old timer chain when stopping
+    std::map<std::pair<std::string, int>, simtime_t> voDedupSeen;
 
   protected:
     bool startApplication() override;

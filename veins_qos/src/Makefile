@@ -34,6 +34,8 @@ O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
 
 # Object files for local .cc, .msg and .sm files
 OBJS = \
+    $O/mac/V2xEdcaFsmController.o \
+    $O/mac/V2xHcf.o \
     $O/qos/QosClassifier.o \
     $O/traffic/CrashBurstApp.o \
     $O/traffic/CritPacketSender.o \
