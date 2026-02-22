@@ -43,3 +43,4 @@ results/
 *.vec
 *.qtenvrc
 *.elog
+*.anf
