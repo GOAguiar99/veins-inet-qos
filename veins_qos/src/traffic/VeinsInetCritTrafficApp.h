@@ -14,6 +14,7 @@ class VeinsInetCritTrafficApp : public veins::VeinsInetApplicationBase
     simtime_t crashDuration = SIMTIME_ZERO;
     simtime_t sendInterval = SIMTIME_ZERO;
     simtime_t crashSendInterval = SIMTIME_ZERO;
+    int voBurstPackets = 0;
     int payloadBytes = 200;
 
     // state

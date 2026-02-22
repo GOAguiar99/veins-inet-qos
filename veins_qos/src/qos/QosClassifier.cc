@@ -1,5 +1,6 @@
 #include "QosClassifier.h"
 #include <cstring>
+#include "inet/networklayer/common/DscpTag_m.h"
 
 namespace veins_qos::qos {
 
@@ -12,6 +13,10 @@ void QosClassifier::initialize()
 
 int QosClassifier::getDscp(inet::Packet *pkt) const
 {
+    // Prefer explicit DSCP request tag set by upper layers/apps.
+    if (const auto dscpReq = pkt->findTag<inet::DscpReq>())
+        return dscpReq->getDifferentiatedServicesCodePoint();
+
     const inet::Ptr<const inet::PacketProtocolTag> protoTag = pkt->findTag<inet::PacketProtocolTag>();
     if (!protoTag)
         return -1;
