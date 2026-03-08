@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<edges>
+    <!-- Mainline eastbound -->
+    <edge id="hw_w_m" from="west" to="merge" numLanes="3" speed="33.33" priority="3"/>
+    <edge id="hw_m_x" from="merge" to="exit" numLanes="3" speed="33.33" priority="3"/>
+    <edge id="hw_x_e" from="exit" to="east" numLanes="3" speed="33.33" priority="3"/>
+
+    <!-- Mainline westbound -->
+    <edge id="hw_e_x" from="east" to="exit" numLanes="3" speed="33.33" priority="3"/>
+    <edge id="hw_x_m" from="exit" to="merge" numLanes="3" speed="33.33" priority="3"/>
+    <edge id="hw_m_w" from="merge" to="west" numLanes="3" speed="33.33" priority="3"/>
+
+    <!-- Ramps -->
+    <edge id="ramp_on" from="ramp_in" to="merge" numLanes="1" speed="22.22" priority="1"/>
+    <edge id="ramp_off" from="exit" to="off_out" numLanes="1" speed="22.22" priority="1"/>
+</edges>
