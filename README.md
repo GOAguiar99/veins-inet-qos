@@ -12,7 +12,6 @@ The active project is `veins_qos/`.
 - `kpi_dashboard/`: Dash app for KPI visualization from `.sca` files.
 - `uppaal/`: offline timed-automata model + queries for MAC-policy verification.
 - `inet/`, `veins/`, `omnetpp-6.1/`: framework/dependency trees.
-- `ap_servers/`: old project, not part of the current study line.
 
 For AI/dev context details, see [`veins_qos/AI_CONTEXT.md`](veins_qos/AI_CONTEXT.md).
 
