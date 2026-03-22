@@ -45,6 +45,7 @@ protected:
     inet::L3Address destAddress;
     int localPort = 9001;
     int destPort = 9001;
+    int multicastInterfaceId = -1;
     inet::UdpSocket socket;
 
 protected:

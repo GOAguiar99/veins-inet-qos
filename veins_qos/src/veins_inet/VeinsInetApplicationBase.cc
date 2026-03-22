@@ -32,6 +32,7 @@
 #include "inet/common/packet/Packet.h"
 #include "inet/common/TagBase_m.h"
 #include "inet/common/TimeTag_m.h"
+#include "inet/linklayer/common/InterfaceTag_m.h"
 #include "inet/networklayer/common/L3AddressResolver.h"
 #include "inet/networklayer/common/L3AddressTag_m.h"
 #include "inet/transportlayer/contract/udp/UdpControlInfo_m.h"
@@ -84,10 +85,10 @@ void VeinsInetApplicationBase::handleStartOperation(LifecycleOperation* operatio
     InterfaceEntry* ie = ift->getInterfaceByName(interface);
 #endif
     ASSERT(ie);
-    socket.setMulticastOutputInterface(ie->getInterfaceId());
-
-    MulticastGroupList mgl = ift->collectMulticastGroups();
-    socket.joinLocalMulticastGroups(mgl);
+    this->multicastInterfaceId = ie->getInterfaceId();
+    socket.setMulticastOutputInterface(this->multicastInterfaceId);
+    socket.setMulticastLoop(false);
+    socket.joinMulticastGroup(destAddress, this->multicastInterfaceId);
 
     socket.setCallback(this);
 
@@ -151,6 +152,12 @@ void VeinsInetApplicationBase::handleMessageWhenUp(cMessage* msg)
 void VeinsInetApplicationBase::socketDataArrived(UdpSocket* socket, Packet* packet)
 {
     auto pk = std::shared_ptr<inet::Packet>(packet);
+
+    auto interfaceInd = pk->findTag<InterfaceInd>();
+    if (interfaceInd != nullptr && this->multicastInterfaceId != -1 && interfaceInd->getInterfaceId() != this->multicastInterfaceId) {
+        EV_DEBUG << "Ignored packet from non-experiment interface: " << pk.get() << endl;
+        return;
+    }
 
     // ignore local echoes
     auto srcAddr = pk->getTag<L3AddressInd>()->getSrcAddress();

@@ -7,7 +7,6 @@ This repository is a master's-project workspace centered on crash-aware QoS for 
 Repository boundaries:
 - `veins_qos/` is the active project and the default place for code, configs, docs, and experiments.
 - `inet/`, `veins/`, and `omnetpp-6.1/` are dependency/framework trees. Treat them as read-only unless a task explicitly requires framework-level changes.
-- `ap_servers/` contains old simulations and is not part of the active research line.
 
 Before making non-trivial changes, read `veins_qos/AI_CONTEXT.md`.
 
