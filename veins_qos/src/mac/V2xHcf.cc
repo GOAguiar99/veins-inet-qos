@@ -63,6 +63,19 @@ bool V2xHcf::hasVoQueuePressure() const
     return voQueue != nullptr && voQueue->getNumPackets() >= voQueueThreshold;
 }
 
+bool V2xHcf::isReceivedVoDataForUs(const Ptr<const Ieee80211MacHeader>& header) const
+{
+    if (!isForUs(header))
+        return false;
+
+    auto dataHeader = dynamicPtrCast<const Ieee80211DataHeader>(header);
+    if (dataHeader == nullptr)
+        return false;
+
+    // Reuse EDCA classification to keep RX-trigger logic aligned with the active QoS mapping.
+    return edca->classifyFrame(dataHeader) == AccessCategory::AC_VO;
+}
+
 void V2xHcf::maybeRequestChannelAccess(AccessCategory ac)
 {
     auto owner = edca->getChannelOwner();
@@ -173,7 +186,15 @@ void V2xHcf::transmissionComplete(Packet *packet, const Ptr<const Ieee80211MacHe
 
 void V2xHcf::processLowerFrame(Packet *packet, const Ptr<const Ieee80211MacHeader>& header)
 {
-    // Keep base lower-path behavior; blocking triggers are only local VO queue driven in processUpperFrame().
+    Enter_Method("processLowerFrame(%s)", packet->getName());
+
+    // Received VO addressed to this node also extends alert mode, reducing BE contention during crash traffic.
+    if (adaptiveBlocking && fsmController != nullptr && isReceivedVoDataForUs(header)) {
+        fsmController->onVoDemandDetected(blockDuration);
+        if (hasBeQueuePressure())
+            scheduleBeRetry();
+    }
+
     Hcf::processLowerFrame(packet, header);
 }
 

@@ -21,10 +21,10 @@ module V2xHcf like IHcf
     parameters:
         bool isBlockAckSupported = default(false);
 
-        bool adaptiveBlocking = default(true);
-        double blockDuration @unit(s) = default(40ms);
-        double maxContinuousBlock @unit(s) = default(250ms);
-        int voQueueThreshold = default(1);
+        bool adaptiveBlocking = default(true); // Enables VO-driven BE suppression via FSMController.
+        double blockDuration @unit(s) = default(40ms); // Alert extension per VO demand event (local TX or received VO).
+        double maxContinuousBlock @unit(s) = default(250ms); // Cap for one continuous alert window; <=0 means uncapped.
+        int voQueueThreshold = default(1); // Local VO queue threshold that triggers alert from upper traffic.
 
         string rxModule;
         string txModule;

@@ -21,6 +21,7 @@ class V2xHcf : public inet::ieee80211::Hcf
     inet::ieee80211::AccessCategory classifyAccessCategory(const inet::Ptr<const inet::ieee80211::Ieee80211DataOrMgmtHeader>& header) const;
     bool hasBeQueuePressure() const;
     bool hasVoQueuePressure() const;
+    bool isReceivedVoDataForUs(const inet::Ptr<const inet::ieee80211::Ieee80211MacHeader>& header) const;
     void maybeRequestChannelAccess(inet::ieee80211::AccessCategory ac);
     void scheduleBeRetry();
 
