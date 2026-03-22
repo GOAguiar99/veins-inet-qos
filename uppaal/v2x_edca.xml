@@ -2,16 +2,15 @@
 <!DOCTYPE nta PUBLIC "-//Uppaal Team//DTD Flat System 1.1//EN" "http://www.it.uu.se/research/group/darts/uppaal/flat-1_2.dtd">
 <nta>
   <declaration>// ============================================================
-// Parameters
+// Parameters (aligned with veins_qos/simulations/veins_inet_light/omnetpp.ini)
 // ============================================================
-// Default parameter set matches the `edca_v2x` branch profile.
-const int blockDuration = 40;
-const int maxContinuousBlock = 250;
+const int blockDuration = 120;
+const int maxContinuousBlock = 0;   // 0 means uncapped, matching current edca_v2x config
 const int sendingGuardTimeout = 50;
 const int voQueueThreshold = 1;
 
-const int crashStart = 10;
-const int burstCount = 4;
+const int crashStart = 30000;
+const int crashDuration = 30000;
 const int sendInterval = 100;
 const int repeatCount = 3;
 const int repeatGapMin = 15;   // repeatGap - repeatJitter
@@ -29,18 +28,27 @@ broadcast chan vo_demand;
 broadcast chan be_request;
 broadcast chan grant_be;
 broadcast chan grant_vo;
-broadcast chan vo_tx_done;
+broadcast chan vo_tx_done_pending;
+broadcast chan vo_tx_done_clear;
 
 // ============================================================
 // Shared observables/counters
 // ============================================================
+clock g;
 bool medium_free = true;
 bool burstDone = false;
 int voQueueDepth = 0;
 int beGrantCount = 0;
 int voGrantCount = 0;
 int logicalVoRx = 0;
-int duplicateVoRx = 0;</declaration>
+int duplicateVoRx = 0;
+
+// helper used in assignments where we need bounded decrement
+int dec1(int x) {
+  if (x &gt; 0) return x - 1;
+  return 0;
+}</declaration>
+
   <template>
     <name x="5" y="5">Medium</name>
     <declaration>clock m;</declaration>
@@ -66,6 +74,7 @@ int duplicateVoRx = 0;</declaration>
       <label kind="assignment" x="12" y="76">m = 0, medium_free = true</label>
     </transition>
   </template>
+
   <template>
     <name x="5" y="5">BeTraffic</name>
     <declaration>clock b;</declaration>
@@ -82,68 +91,210 @@ int duplicateVoRx = 0;</declaration>
       <label kind="assignment" x="30" y="4">b = 0</label>
     </transition>
   </template>
+
   <template>
     <name x="5" y="5">CrashWorkload</name>
-    <declaration>clock t;
-clock gap;
+    <declaration>clock gap;
 clock waitBurst;
-int burst = 0;
 int rep = 0;</declaration>
     <location id="crash_warmup" x="0" y="0">
       <name x="-26" y="-34">WARMUP</name>
-      <label kind="invariant" x="-52" y="20">t &lt;= crashStart</label>
+      <label kind="invariant" x="-52" y="20">g &lt;= crashStart</label>
     </location>
-    <location id="crash_emit" x="220" y="0">
-      <name x="194" y="-34">EMIT</name>
+    <location id="crash_emit" x="240" y="0">
+      <name x="212" y="-34">EMIT</name>
     </location>
-    <location id="crash_repeat_wait" x="420" y="0">
-      <name x="378" y="-34">REPEAT_WAIT</name>
-      <label kind="invariant" x="342" y="20">gap &lt;= repeatGapMax</label>
+    <location id="crash_repeat_wait" x="470" y="0">
+      <name x="422" y="-34">REPEAT_WAIT</name>
+      <label kind="invariant" x="392" y="20">gap &lt;= repeatGapMax</label>
     </location>
-    <location id="crash_between" x="220" y="180">
-      <name x="178" y="210">BETWEEN_BURSTS</name>
-      <label kind="invariant" x="148" y="238">waitBurst &lt;= sendInterval</label>
+    <location id="crash_between" x="240" y="180">
+      <name x="194" y="210">WAIT_NEXT_BURST</name>
+      <label kind="invariant" x="172" y="238">waitBurst &lt;= sendInterval</label>
     </location>
-    <location id="crash_done" x="420" y="180">
-      <name x="402" y="210">DONE</name>
+    <location id="crash_done" x="470" y="180">
+      <name x="448" y="210">DONE</name>
     </location>
     <init ref="crash_warmup"/>
     <transition>
       <source ref="crash_warmup"/>
       <target ref="crash_emit"/>
-      <label kind="guard" x="38" y="-52">t &gt;= crashStart</label>
-      <label kind="assignment" x="30" y="-24">burst = 0, rep = 0, gap = 0</label>
+      <label kind="guard" x="52" y="-52">g &gt;= crashStart</label>
+      <label kind="assignment" x="48" y="-24">rep = 0, gap = 0</label>
     </transition>
     <transition>
       <source ref="crash_emit"/>
       <target ref="crash_repeat_wait"/>
-      <label kind="synchronisation" x="260" y="-52">vo_demand!</label>
-      <label kind="assignment" x="252" y="-24">rep = rep + 1, gap = 0</label>
+      <label kind="guard" x="284" y="-82">g &lt; crashStart + crashDuration</label>
+      <label kind="synchronisation" x="286" y="-54">vo_demand!</label>
+      <label kind="assignment" x="280" y="-26">rep = rep + 1, gap = 0</label>
+    </transition>
+    <transition>
+      <source ref="crash_emit"/>
+      <target ref="crash_done"/>
+      <label kind="guard" x="286" y="78">g &gt;= crashStart + crashDuration</label>
+      <label kind="assignment" x="290" y="106">burstDone = true</label>
     </transition>
     <transition>
       <source ref="crash_repeat_wait"/>
       <target ref="crash_emit"/>
-      <label kind="guard" x="320" y="-82">rep &lt; repeatCount &amp;&amp; gap &gt;= repeatGapMin</label>
+      <label kind="guard" x="356" y="-82">rep &lt; repeatCount &amp;&amp; gap &gt;= repeatGapMin</label>
     </transition>
     <transition>
       <source ref="crash_repeat_wait"/>
       <target ref="crash_between"/>
-      <label kind="guard" x="216" y="48">rep == repeatCount &amp;&amp; gap &gt;= repeatGapMin</label>
-      <label kind="assignment" x="212" y="76">waitBurst = 0</label>
+      <label kind="guard" x="254" y="54">rep == repeatCount &amp;&amp; gap &gt;= repeatGapMin</label>
+      <label kind="assignment" x="250" y="82">waitBurst = 0, rep = 0</label>
     </transition>
     <transition>
       <source ref="crash_between"/>
       <target ref="crash_emit"/>
-      <label kind="guard" x="212" y="104">burst + 1 &lt; burstCount &amp;&amp; waitBurst &gt;= sendInterval</label>
-      <label kind="assignment" x="204" y="132">burst = burst + 1, rep = 0, gap = 0</label>
+      <label kind="guard" x="246" y="122">waitBurst &gt;= sendInterval &amp;&amp; g &lt; crashStart + crashDuration</label>
+      <label kind="assignment" x="240" y="150">gap = 0</label>
     </transition>
     <transition>
       <source ref="crash_between"/>
       <target ref="crash_done"/>
-      <label kind="guard" x="288" y="208">burst + 1 &gt;= burstCount &amp;&amp; waitBurst &gt;= sendInterval</label>
-      <label kind="assignment" x="284" y="236">burstDone = true</label>
+      <label kind="guard" x="296" y="206">g &gt;= crashStart + crashDuration</label>
+      <label kind="assignment" x="296" y="234">burstDone = true</label>
     </transition>
   </template>
+
+  <template>
+    <name x="5" y="5">Controller</name>
+    <declaration>clock cycle;
+clock block;
+clock send;</declaration>
+    <location id="ctrl_listening" x="0" y="0">
+      <name x="-36" y="-34">LISTENING</name>
+    </location>
+    <location id="ctrl_blocking" x="250" y="0">
+      <name x="214" y="-34">BLOCKING</name>
+      <label kind="invariant" x="172" y="20">maxContinuousBlock == 0 || cycle &lt;= maxContinuousBlock</label>
+    </location>
+    <location id="ctrl_sending" x="500" y="0">
+      <name x="470" y="-34">SENDING</name>
+      <label kind="invariant" x="372" y="20">(maxContinuousBlock == 0 || cycle &lt;= maxContinuousBlock) &amp;&amp; (sendingGuardTimeout == 0 || send &lt;= sendingGuardTimeout)</label>
+    </location>
+    <init ref="ctrl_listening"/>
+
+    <transition>
+      <source ref="ctrl_listening"/>
+      <target ref="ctrl_listening"/>
+      <label kind="synchronisation" x="42" y="-132">be_request?</label>
+      <label kind="guard" x="32" y="-160">medium_free &amp;&amp; voQueueDepth &lt; voQueueThreshold</label>
+      <label kind="synchronisation" x="44" y="-104">grant_be!</label>
+      <label kind="assignment" x="44" y="-76">beGrantCount = beGrantCount + 1</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_listening"/>
+      <target ref="ctrl_blocking"/>
+      <label kind="synchronisation" x="74" y="-52">vo_demand?</label>
+      <label kind="assignment" x="64" y="-24">voQueueDepth = voQueueDepth + 1, cycle = 0, block = 0</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_blocking"/>
+      <target ref="ctrl_blocking"/>
+      <label kind="synchronisation" x="286" y="-52">vo_demand?</label>
+      <label kind="assignment" x="276" y="-24">voQueueDepth = voQueueDepth + 1, block = 0</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_sending"/>
+      <target ref="ctrl_sending"/>
+      <label kind="synchronisation" x="538" y="-52">vo_demand?</label>
+      <label kind="assignment" x="530" y="-24">voQueueDepth = voQueueDepth + 1</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_listening"/>
+      <target ref="ctrl_sending"/>
+      <label kind="guard" x="144" y="-96">medium_free &amp;&amp; voQueueDepth &gt;= voQueueThreshold</label>
+      <label kind="synchronisation" x="178" y="-122">grant_vo!</label>
+      <label kind="assignment" x="176" y="-150">voGrantCount = voGrantCount + 1, send = 0</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_blocking"/>
+      <target ref="ctrl_sending"/>
+      <label kind="guard" x="354" y="-96">medium_free &amp;&amp; voQueueDepth &gt;= voQueueThreshold</label>
+      <label kind="synchronisation" x="380" y="-122">grant_vo!</label>
+      <label kind="assignment" x="376" y="-150">voGrantCount = voGrantCount + 1, send = 0</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_blocking"/>
+      <target ref="ctrl_listening"/>
+      <label kind="guard" x="104" y="104">voQueueDepth == 0 &amp;&amp; block &gt;= blockDuration</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_blocking"/>
+      <target ref="ctrl_listening"/>
+      <label kind="guard" x="250" y="132">maxContinuousBlock &gt; 0 &amp;&amp; cycle &gt;= maxContinuousBlock</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_sending"/>
+      <target ref="ctrl_blocking"/>
+      <label kind="synchronisation" x="564" y="-112">vo_tx_done_pending?</label>
+      <label kind="assignment" x="546" y="-84">voQueueDepth = dec1(voQueueDepth), block = 0</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_sending"/>
+      <target ref="ctrl_listening"/>
+      <label kind="synchronisation" x="540" y="110">vo_tx_done_clear?</label>
+      <label kind="assignment" x="540" y="138">voQueueDepth = 0</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_sending"/>
+      <target ref="ctrl_blocking"/>
+      <label kind="guard" x="402" y="84">sendingGuardTimeout &gt; 0 &amp;&amp; send &gt;= sendingGuardTimeout &amp;&amp; voQueueDepth &gt; 0</label>
+      <label kind="assignment" x="428" y="112">block = 0</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_sending"/>
+      <target ref="ctrl_listening"/>
+      <label kind="guard" x="340" y="156">sendingGuardTimeout &gt; 0 &amp;&amp; send &gt;= sendingGuardTimeout &amp;&amp; voQueueDepth == 0</label>
+    </transition>
+  </template>
+
+  <template>
+    <name x="5" y="5">VoTransmitter</name>
+    <declaration>clock tx;</declaration>
+    <location id="tx_idle" x="0" y="0">
+      <name x="-10" y="-34">IDLE</name>
+    </location>
+    <location id="tx_busy" x="220" y="0">
+      <name x="196" y="-34">TX</name>
+      <label kind="invariant" x="174" y="20">tx &lt;= voTxDuration</label>
+    </location>
+    <init ref="tx_idle"/>
+    <transition>
+      <source ref="tx_idle"/>
+      <target ref="tx_busy"/>
+      <label kind="synchronisation" x="46" y="-54">grant_vo?</label>
+      <label kind="assignment" x="46" y="-26">tx = 0</label>
+    </transition>
+    <transition>
+      <source ref="tx_busy"/>
+      <target ref="tx_idle"/>
+      <label kind="guard" x="262" y="-54">tx &gt;= voTxDuration &amp;&amp; voQueueDepth &gt; 1</label>
+      <label kind="synchronisation" x="262" y="-26">vo_tx_done_pending!</label>
+    </transition>
+    <transition>
+      <source ref="tx_busy"/>
+      <target ref="tx_idle"/>
+      <label kind="guard" x="262" y="52">tx &gt;= voTxDuration &amp;&amp; voQueueDepth &lt;= 1</label>
+      <label kind="synchronisation" x="262" y="80">vo_tx_done_clear!</label>
+    </transition>
+  </template>
+
   <template>
     <name x="5" y="5">GrantObserver</name>
     <location id="grant_idle" x="0" y="0">
@@ -177,6 +328,7 @@ int rep = 0;</declaration>
       <target ref="grant_idle"/>
     </transition>
   </template>
+
   <template>
     <name x="5" y="5">Receiver</name>
     <declaration>clock dedup;</declaration>
@@ -187,165 +339,52 @@ int rep = 0;</declaration>
       <name x="192" y="-34">HOLDING</name>
     </location>
     <init ref="rx_ready"/>
+
     <transition>
       <source ref="rx_ready"/>
       <target ref="rx_holding"/>
-      <label kind="synchronisation" x="48" y="-52">vo_tx_done?</label>
-      <label kind="assignment" x="40" y="-24">logicalVoRx = logicalVoRx + 1, dedup = 0</label>
+      <label kind="synchronisation" x="44" y="-54">vo_tx_done_pending?</label>
+      <label kind="assignment" x="36" y="-26">logicalVoRx = logicalVoRx + 1, dedup = 0</label>
+    </transition>
+    <transition>
+      <source ref="rx_ready"/>
+      <target ref="rx_holding"/>
+      <label kind="synchronisation" x="44" y="56">vo_tx_done_clear?</label>
+      <label kind="assignment" x="36" y="84">logicalVoRx = logicalVoRx + 1, dedup = 0</label>
+    </transition>
+
+    <transition>
+      <source ref="rx_holding"/>
+      <target ref="rx_holding"/>
+      <label kind="guard" x="276" y="-82">dedup &lt;= voDedupWindow</label>
+      <label kind="synchronisation" x="276" y="-54">vo_tx_done_pending?</label>
+      <label kind="assignment" x="276" y="-26">duplicateVoRx = duplicateVoRx + 1</label>
     </transition>
     <transition>
       <source ref="rx_holding"/>
       <target ref="rx_holding"/>
-      <label kind="guard" x="272" y="-52">dedup &lt;= voDedupWindow</label>
-      <label kind="synchronisation" x="272" y="-24">vo_tx_done?</label>
-      <label kind="assignment" x="272" y="4">duplicateVoRx = duplicateVoRx + 1</label>
+      <label kind="guard" x="276" y="44">dedup &lt;= voDedupWindow</label>
+      <label kind="synchronisation" x="276" y="72">vo_tx_done_clear?</label>
+      <label kind="assignment" x="276" y="100">duplicateVoRx = duplicateVoRx + 1</label>
     </transition>
+
     <transition>
       <source ref="rx_holding"/>
       <target ref="rx_ready"/>
       <label kind="guard" x="40" y="48">dedup &gt;= voDedupWindow</label>
     </transition>
   </template>
-  <template>
-    <name x="5" y="5">Controller</name>
-    <declaration>clock cycle;
-clock block;
-clock send;</declaration>
-    <location id="ctrl_listening" x="0" y="0">
-      <name x="-36" y="-34">LISTENING</name>
-    </location>
-    <location id="ctrl_blocking" x="250" y="0">
-      <name x="214" y="-34">BLOCKING</name>
-      <label kind="invariant" x="184" y="20">cycle &lt;= maxContinuousBlock</label>
-    </location>
-    <location id="ctrl_grant_be" x="250" y="-150">
-      <name x="214" y="-184">GRANT_BE</name>
-      <committed/>
-    </location>
-    <location id="ctrl_grant_vo" x="500" y="-150">
-      <name x="464" y="-184">GRANT_VO</name>
-      <committed/>
-    </location>
-    <location id="ctrl_sending" x="500" y="0">
-      <name x="470" y="-34">SENDING</name>
-      <label kind="invariant" x="422" y="20">cycle &lt;= maxContinuousBlock &amp;&amp; send &lt;= sendingGuardTimeout</label>
-    </location>
-    <location id="ctrl_tx_done_pending" x="750" y="-80">
-      <name x="700" y="-114">TX_DONE_PENDING</name>
-      <committed/>
-    </location>
-    <location id="ctrl_tx_done_clear" x="750" y="80">
-      <name x="706" y="110">TX_DONE_CLEAR</name>
-      <committed/>
-    </location>
-    <init ref="ctrl_listening"/>
-    <transition>
-      <source ref="ctrl_listening"/>
-      <target ref="ctrl_blocking"/>
-      <label kind="synchronisation" x="74" y="-52">vo_demand?</label>
-      <label kind="assignment" x="64" y="-24">voQueueDepth = voQueueDepth + 1, cycle = 0, block = 0</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_listening"/>
-      <target ref="ctrl_blocking"/>
-      <label kind="guard" x="92" y="48">voQueueDepth &gt;= voQueueThreshold &amp;&amp; !medium_free</label>
-      <label kind="assignment" x="112" y="76">cycle = 0, block = 0</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_listening"/>
-      <target ref="ctrl_grant_vo"/>
-      <label kind="guard" x="148" y="-214">voQueueDepth &gt;= voQueueThreshold &amp;&amp; medium_free</label>
-      <label kind="assignment" x="184" y="-242">cycle = 0, send = 0</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_listening"/>
-      <target ref="ctrl_grant_be"/>
-      <label kind="synchronisation" x="52" y="-182">be_request?</label>
-      <label kind="guard" x="38" y="-210">medium_free &amp;&amp; voQueueDepth &lt; voQueueThreshold</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_grant_be"/>
-      <target ref="ctrl_listening"/>
-      <label kind="synchronisation" x="112" y="-122">grant_be!</label>
-      <label kind="assignment" x="96" y="-94">beGrantCount = beGrantCount + 1</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_blocking"/>
-      <target ref="ctrl_blocking"/>
-      <label kind="synchronisation" x="286" y="-52">vo_demand?</label>
-      <label kind="assignment" x="276" y="-24">voQueueDepth = voQueueDepth + 1, block = 0</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_blocking"/>
-      <target ref="ctrl_grant_vo"/>
-      <label kind="guard" x="338" y="-206">medium_free &amp;&amp; voQueueDepth &gt;= voQueueThreshold</label>
-      <label kind="assignment" x="380" y="-234">send = 0</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_blocking"/>
-      <target ref="ctrl_listening"/>
-      <label kind="guard" x="104" y="104">voQueueDepth == 0 &amp;&amp; block &gt;= blockDuration</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_blocking"/>
-      <target ref="ctrl_listening"/>
-      <label kind="guard" x="254" y="130">cycle &gt;= maxContinuousBlock</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_grant_vo"/>
-      <target ref="ctrl_sending"/>
-      <label kind="synchronisation" x="560" y="-122">grant_vo!</label>
-      <label kind="assignment" x="548" y="-94">voGrantCount = voGrantCount + 1</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_sending"/>
-      <target ref="ctrl_sending"/>
-      <label kind="synchronisation" x="540" y="-52">vo_demand?</label>
-      <label kind="assignment" x="534" y="-24">voQueueDepth = voQueueDepth + 1</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_sending"/>
-      <target ref="ctrl_tx_done_pending"/>
-      <label kind="guard" x="602" y="-140">send &gt;= voTxDuration &amp;&amp; voQueueDepth &gt; 1</label>
-      <label kind="synchronisation" x="624" y="-112">vo_tx_done!</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_tx_done_pending"/>
-      <target ref="ctrl_blocking"/>
-      <label kind="assignment" x="590" y="-18">voQueueDepth = voQueueDepth - 1, block = 0</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_sending"/>
-      <target ref="ctrl_tx_done_clear"/>
-      <label kind="guard" x="602" y="108">send &gt;= voTxDuration &amp;&amp; voQueueDepth == 1</label>
-      <label kind="synchronisation" x="620" y="136">vo_tx_done!</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_tx_done_clear"/>
-      <target ref="ctrl_listening"/>
-      <label kind="assignment" x="584" y="46">voQueueDepth = 0</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_sending"/>
-      <target ref="ctrl_blocking"/>
-      <label kind="guard" x="394" y="104">send &gt;= sendingGuardTimeout &amp;&amp; voQueueDepth &gt; 0</label>
-      <label kind="assignment" x="422" y="132">block = 0</label>
-    </transition>
-    <transition>
-      <source ref="ctrl_sending"/>
-      <target ref="ctrl_listening"/>
-      <label kind="guard" x="340" y="156">send &gt;= sendingGuardTimeout &amp;&amp; voQueueDepth == 0</label>
-    </transition>
-  </template>
+
   <system>// Instance bindings
 medium = Medium();
 beTraffic = BeTraffic();
 workload = CrashWorkload();
+controller = Controller();
+voTx = VoTransmitter();
 grants = GrantObserver();
 receiver = Receiver();
-controller = Controller();
 
 // Composed system
-system medium, beTraffic, workload, grants, receiver, controller;</system>
+system medium, beTraffic, workload, controller, voTx, grants, receiver;</system>
   <queries/>
 </nta>
