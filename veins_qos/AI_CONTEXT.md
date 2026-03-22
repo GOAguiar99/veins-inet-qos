@@ -38,6 +38,12 @@ Use this mental model when working in the repo:
 - `ap_servers/` contains old simulations and should not guide current design decisions.
 - `inet/`, `veins/`, and `omnetpp-6.1/` are dependency/framework trees and are usually read-only.
 
+Supporting documentation and analysis tools:
+
+- `/README.md` for top-level quick start
+- `/kpi_dashboard/README.md` for KPI plotting and result comparison
+- `/uppaal/README.md` for formal verification workflow
+
 If there is any duplicate-looking project tree elsewhere, prefer the top-level `veins_qos/` directory as the authoritative source unless the user explicitly says otherwise.
 
 ## Thesis framing
@@ -85,7 +91,11 @@ In the default `omnetpp.ini`:
 - normal traffic uses `exponential(1s)` intervals and `100` byte payloads
 - crash traffic starts at `30s`
 - crash traffic continues for `30s`
-- crash traffic uses `1s` intervals and `100` byte payloads
+- crash traffic uses `100ms` intervals and `120` byte payloads
+- crash burst repeat settings:
+  - `repeatCount = 3`
+  - `repeatGap = 20ms`
+  - `repeatJitter = 5ms`
 
 The applications communicate via UDP multicast to `224.0.0.1` on `wlan0`.
 

@@ -8,6 +8,16 @@ This dashboard reads OMNeT++ scalar files (`.sca`) and plots the core KPIs for t
 
 It is designed for fast comparisons such as `highway_plain` vs `highway_edca_v2x`.
 
+## Expected Interpretation
+
+For the adaptive MAC trade-off, the typical expectation is:
+
+- VO path is protected (stable or improved VO service)
+- BE may pay a penalty (for example increased BE delay)
+- TX/RX counts help detect whether changes are due to scheduling or packet loss
+
+Use this dashboard to check whether that behavior appears in each run pair.
+
 ## Setup
 
 From repository root:
@@ -37,6 +47,16 @@ Custom results directory:
 ```bash
 python app.py --results /absolute/path/to/results
 ```
+
+## Typical Workflow
+
+1. Run baseline config (for example `highway_plain`).
+2. Run adaptive config (for example `highway_edca_v2x`) with the same seed.
+3. Open dashboard and compare:
+   - BE delay chart
+   - VO delay chart
+   - BE/VO TX-RX count chart
+   - trade-off scatter (`BE delay` vs `VO TX count`)
 
 ## KPI Definitions Used
 
