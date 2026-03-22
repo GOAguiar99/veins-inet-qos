@@ -44,6 +44,7 @@ class V2xEdcaFsmController : public omnetpp::cSimpleModule
 
     bool isBeBlocked() const;
     bool isSending() const;
+    omnetpp::simtime_t getBlockingUntil() const { return blockingUntil; }
     V2xState getState() const { return state; }
 };
 

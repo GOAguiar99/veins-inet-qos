@@ -12,6 +12,11 @@ using namespace inet::ieee80211;
 
 Define_Module(V2xHcf);
 
+V2xHcf::~V2xHcf()
+{
+    cancelAndDelete(beRetryTimer);
+}
+
 void V2xHcf::initialize(int stage)
 {
     Hcf::initialize(stage);
@@ -25,6 +30,7 @@ void V2xHcf::initialize(int stage)
             blockDuration = maxContinuousBlock;
 
         fsmController = check_and_cast<V2xEdcaFsmController *>(getSubmodule("FSMController"));
+        beRetryTimer = new cMessage("beRetryTimer");
 
         EV_INFO << "V2xHcf init"
                 << " adaptiveBlocking=" << adaptiveBlocking
@@ -45,6 +51,12 @@ AccessCategory V2xHcf::classifyAccessCategory(const Ptr<const Ieee80211DataOrMgm
     throw cRuntimeError("Unknown upper frame type");
 }
 
+bool V2xHcf::hasBeQueuePressure() const
+{
+    auto beQueue = edca->getEdcaf(AccessCategory::AC_BE)->getPendingQueue();
+    return beQueue != nullptr && !beQueue->isEmpty();
+}
+
 bool V2xHcf::hasVoQueuePressure() const
 {
     auto voQueue = edca->getEdcaf(AccessCategory::AC_VO)->getPendingQueue();
@@ -56,6 +68,44 @@ void V2xHcf::maybeRequestChannelAccess(AccessCategory ac)
     auto owner = edca->getChannelOwner();
     if (owner == nullptr || owner->getAccessCategory() != ac)
         edca->requestChannelAccess(ac, this);
+}
+
+void V2xHcf::scheduleBeRetry()
+{
+    if (getSimulation()->getContextModule() != this) {
+        Enter_Method("scheduleBeRetry");
+    }
+
+    if (beRetryTimer == nullptr || !hasBeQueuePressure())
+        return;
+
+    simtime_t retryAt = simTime();
+    if (adaptiveBlocking && fsmController != nullptr && fsmController->isBeBlocked()) {
+        retryAt = fsmController->getBlockingUntil();
+        if (retryAt <= simTime())
+            retryAt = simTime() + SimTime(1, SIMTIME_US);
+    }
+
+    if (beRetryTimer->isScheduled())
+        rescheduleAt(retryAt, beRetryTimer);
+    else
+        scheduleAt(retryAt, beRetryTimer);
+}
+
+void V2xHcf::handleMessage(cMessage *msg)
+{
+    if (msg == beRetryTimer) {
+        if (adaptiveBlocking && fsmController != nullptr && fsmController->isBeBlocked()) {
+            scheduleBeRetry();
+            return;
+        }
+
+        if (hasBeQueuePressure())
+            maybeRequestChannelAccess(AccessCategory::AC_BE);
+        return;
+    }
+
+    Hcf::handleMessage(msg);
 }
 
 void V2xHcf::processUpperFrame(Packet *packet, const Ptr<const Ieee80211DataOrMgmtHeader>& header)
@@ -79,6 +129,7 @@ void V2xHcf::processUpperFrame(Packet *packet, const Ptr<const Ieee80211DataOrMg
 
         if (ac == AccessCategory::AC_BE && fsmController->isBeBlocked()) {
             EV_DETAIL << "Suppressing BE request while FSM is blocking/sending" << endl;
+            scheduleBeRetry();
             return;
         }
     }
@@ -88,6 +139,8 @@ void V2xHcf::processUpperFrame(Packet *packet, const Ptr<const Ieee80211DataOrMg
 
 void V2xHcf::channelGranted(IChannelAccess *channelAccess)
 {
+    Enter_Method("channelGranted");
+
     auto edcaf = check_and_cast<Edcaf *>(channelAccess);
     if (adaptiveBlocking && fsmController != nullptr && edcaf->getAccessCategory() == AccessCategory::AC_VO)
         fsmController->onVoTransmissionStart();
@@ -97,6 +150,8 @@ void V2xHcf::channelGranted(IChannelAccess *channelAccess)
 
 void V2xHcf::transmissionComplete(Packet *packet, const Ptr<const Ieee80211MacHeader>& header)
 {
+    Enter_Method("transmissionComplete");
+
     bool voDataTxContext = false;
     auto owner = edca->getChannelOwner();
     if (owner != nullptr && owner->getAccessCategory() == AccessCategory::AC_VO) {
@@ -111,6 +166,8 @@ void V2xHcf::transmissionComplete(Packet *packet, const Ptr<const Ieee80211MacHe
         fsmController->onVoTransmissionEnd(hasPendingVo);
         if (hasPendingVo)
             fsmController->onVoDemandDetected(blockDuration);
+        else if (hasBeQueuePressure())
+            scheduleBeRetry();
     }
 }
 
