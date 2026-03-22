@@ -72,6 +72,10 @@ void V2xHcf::maybeRequestChannelAccess(AccessCategory ac)
 
 void V2xHcf::scheduleBeRetry()
 {
+    if (getSimulation()->getContextModule() != this) {
+        Enter_Method("scheduleBeRetry");
+    }
+
     if (beRetryTimer == nullptr || !hasBeQueuePressure())
         return;
 
@@ -135,6 +139,8 @@ void V2xHcf::processUpperFrame(Packet *packet, const Ptr<const Ieee80211DataOrMg
 
 void V2xHcf::channelGranted(IChannelAccess *channelAccess)
 {
+    Enter_Method("channelGranted");
+
     auto edcaf = check_and_cast<Edcaf *>(channelAccess);
     if (adaptiveBlocking && fsmController != nullptr && edcaf->getAccessCategory() == AccessCategory::AC_VO)
         fsmController->onVoTransmissionStart();
@@ -144,6 +150,8 @@ void V2xHcf::channelGranted(IChannelAccess *channelAccess)
 
 void V2xHcf::transmissionComplete(Packet *packet, const Ptr<const Ieee80211MacHeader>& header)
 {
+    Enter_Method("transmissionComplete");
+
     bool voDataTxContext = false;
     auto owner = edca->getChannelOwner();
     if (owner != nullptr && owner->getAccessCategory() == AccessCategory::AC_VO) {
