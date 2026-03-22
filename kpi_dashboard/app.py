@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -135,6 +137,70 @@ ROUND_COLUMNS = [
     "mac_drop_delta_count",
     "mac_drop_per_tx_delta",
 ]
+
+RUN_EXPORT_COLUMNS = [
+    "config",
+    "run",
+    "be_delay_ms",
+    "be_delay_p95_ms",
+    "be_jitter_ms",
+    "be_rx_per_tx",
+    "be_tx_count",
+    "be_rx_count",
+    "vo_delay_ms",
+    "vo_delay_p95_ms",
+    "vo_jitter_ms",
+    "vo_rx_per_tx",
+    "vo_tx_count",
+    "vo_rx_count",
+    "mac_drop_count",
+    "mac_drop_per_tx",
+]
+
+
+def _records_for_json(frame: pd.DataFrame) -> list[dict]:
+    if frame.empty:
+        return []
+    safe = frame.replace({float("inf"): None, float("-inf"): None}).where(pd.notnull(frame), None)
+    return safe.to_dict("records")
+
+
+def _build_feedback_snapshot(payload: dict | None, baseline_config: str | None) -> dict:
+    if not payload:
+        return {}
+
+    rows = payload.get("rows", [])
+    simulation_label = payload.get("simulation_label", "Custom")
+    if not rows:
+        return {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "simulation_label": simulation_label,
+            "message": "No result rows loaded.",
+        }
+
+    frame = pd.DataFrame(rows)
+    config_summary = _build_config_summary(frame)
+    comparison_summary, baseline_used = _build_comparison_summary(config_summary, baseline_config)
+    config_list = _ordered_configs(frame["config"].astype(str).unique().tolist())
+    run_columns = [column for column in RUN_EXPORT_COLUMNS if column in frame.columns]
+    if run_columns:
+        sort_by = [column for column in ("config", "run") if column in run_columns] or [run_columns[0]]
+        run_level = _display_frame(frame, run_columns).sort_values(sort_by).reset_index(drop=True)
+    else:
+        run_level = pd.DataFrame()
+
+    return {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "simulation_label": simulation_label,
+        "selected_baseline": baseline_config,
+        "baseline_used": baseline_used,
+        "run_count": int(len(frame)),
+        "config_count": int(frame["config"].nunique()),
+        "configs": config_list,
+        "run_level_metrics": _records_for_json(run_level),
+        "config_summary": _records_for_json(_display_frame(config_summary, CONFIG_SUMMARY_COLUMNS)),
+        "comparison_vs_baseline": _records_for_json(_display_frame(comparison_summary, COMPARISON_COLUMNS)),
+    }
 
 
 def _default_results_dir() -> Path:
@@ -485,25 +551,88 @@ def _plot_packet_loss(frame: pd.DataFrame, simulation_label: str):
     return fig
 
 
-def _plot_simulation_timeline(frame: pd.DataFrame, simulation_label: str):
+def _aggregate_timeline(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
-        return px.scatter(title="Simulation Timeline (no vector data)")
+        return pd.DataFrame()
 
-    aggregated = (
+    metric_columns = [
+        "throughput_kbps",
+        "throughput_be_kbps",
+        "throughput_vo_kbps",
+        "active_tx_nodes",
+        "listening_nodes",
+        "blocking_nodes",
+        "sending_nodes",
+    ]
+    available_columns = [column for column in metric_columns if column in frame.columns]
+    if not available_columns:
+        return pd.DataFrame()
+
+    return (
         frame.groupby(
             ["config", "time_s"],
             as_index=False,
-        )[["throughput_kbps", "active_tx_nodes", "listening_nodes", "blocking_nodes", "sending_nodes"]]
+        )[available_columns]
         .mean(numeric_only=True)
         .sort_values(["config", "time_s"])
     )
+
+
+def _plot_throughput_timeline(frame: pd.DataFrame, simulation_label: str):
+    aggregated = _aggregate_timeline(frame)
+    if aggregated.empty:
+        return px.scatter(title="Throughput Timeline (no vector data)")
+
+    throughput_columns = []
+    for column in ["throughput_kbps", "throughput_be_kbps", "throughput_vo_kbps"]:
+        if column in aggregated.columns and not aggregated[column].isna().all():
+            throughput_columns.append(column)
+
+    if not throughput_columns:
+        return px.scatter(title=f"Throughput Timeline ({simulation_label})")
+
+    melted = aggregated.melt(
+        id_vars=["config", "time_s"],
+        value_vars=throughput_columns,
+        var_name="metric",
+        value_name="throughput_value_kbps",
+    )
+    melted["metric"] = melted["metric"].map(
+        {
+            "throughput_kbps": "Total Throughput",
+            "throughput_be_kbps": "BE Throughput",
+            "throughput_vo_kbps": "VO Throughput",
+        }
+    )
+
+    fig = px.line(
+        melted,
+        x="time_s",
+        y="throughput_value_kbps",
+        color="config",
+        facet_row="metric",
+        title=f"Throughput Timeline ({simulation_label})",
+    )
+    fig.for_each_annotation(lambda annotation: annotation.update(text=annotation.text.split("=")[-1]))
+    fig.update_layout(
+        xaxis_title="Simulation Time (s)",
+        yaxis_title="Throughput (kbps)",
+    )
+    return fig
+
+
+def _plot_simulation_timeline(frame: pd.DataFrame, simulation_label: str):
+    aggregated = _aggregate_timeline(frame)
+    if aggregated.empty:
+        return px.scatter(title="State Timeline (no vector data)")
+
     available_metrics = []
-    for column in ["throughput_kbps", "active_tx_nodes", "listening_nodes", "blocking_nodes", "sending_nodes"]:
+    for column in ["active_tx_nodes", "listening_nodes", "blocking_nodes", "sending_nodes"]:
         if column in aggregated.columns and not aggregated[column].isna().all():
             available_metrics.append(column)
 
     if not available_metrics:
-        return px.scatter(title=f"Simulation Timeline ({simulation_label})")
+        return px.scatter(title=f"State Timeline ({simulation_label})")
 
     melted = aggregated.melt(
         id_vars=["config", "time_s"],
@@ -513,7 +642,6 @@ def _plot_simulation_timeline(frame: pd.DataFrame, simulation_label: str):
     )
     melted["metric"] = melted["metric"].map(
         {
-            "throughput_kbps": "Network Throughput (kbps)",
             "active_tx_nodes": "Active TX Nodes (count)",
             "listening_nodes": "Nodes in LISTENING",
             "blocking_nodes": "Nodes in BLOCKING",
@@ -526,7 +654,7 @@ def _plot_simulation_timeline(frame: pd.DataFrame, simulation_label: str):
         y="value",
         color="config",
         facet_row="metric",
-        title=f"Simulation Timeline ({simulation_label})",
+        title=f"State Timeline ({simulation_label})",
     )
     fig.for_each_annotation(lambda annotation: annotation.update(text=annotation.text.split("=")[-1]))
     fig.update_layout(xaxis_title="Simulation Time (s)", yaxis_title="")
@@ -579,6 +707,7 @@ def build_app(results_dir: Path) -> Dash:
                 style={"marginBottom": "16px", "color": "#4a5568"},
             ),
             dcc.Store(id="results-store"),
+            dcc.Store(id="feedback-export-store"),
             html.H3("Config Summary"),
             dash_table.DataTable(
                 id="config-summary-table",
@@ -593,6 +722,41 @@ def build_app(results_dir: Path) -> Dash:
                 style_table={"overflowX": "auto"},
                 style_cell={"textAlign": "left", "padding": "6px"},
             ),
+            html.H3("Share With AI"),
+            html.Div(
+                "Use this snapshot to share your current dashboard data in chat for feedback.",
+                style={"marginBottom": "8px"},
+            ),
+            html.Div(
+                [
+                    dcc.Clipboard(
+                        target_id="feedback-snapshot",
+                        title="Copy snapshot",
+                        style={"display": "inline-block", "fontSize": 20, "cursor": "pointer"},
+                    ),
+                    html.Button(
+                        "Download Snapshot JSON",
+                        id="download-feedback-button",
+                        n_clicks=0,
+                        style={"marginLeft": "12px"},
+                    ),
+                    dcc.Download(id="download-feedback-json"),
+                ],
+                style={"marginBottom": "8px"},
+            ),
+            dcc.Textarea(
+                id="feedback-snapshot",
+                readOnly=True,
+                style={
+                    "width": "100%",
+                    "height": "260px",
+                    "fontFamily": "monospace",
+                    "fontSize": "12px",
+                },
+            ),
+            html.H3("Throughput Timeline"),
+            dcc.Graph(id="throughput-timeline-plot"),
+            html.H3("State Timeline"),
             dcc.Graph(id="simulation-timeline-plot"),
             dcc.Graph(id="latency-profile-plot"),
             dcc.Graph(id="jitter-plot"),
@@ -657,6 +821,7 @@ def build_app(results_dir: Path) -> Dash:
         Output("config-summary-table", "columns"),
         Output("comparison-table", "data"),
         Output("comparison-table", "columns"),
+        Output("throughput-timeline-plot", "figure"),
         Output("simulation-timeline-plot", "figure"),
         Output("latency-profile-plot", "figure"),
         Output("jitter-plot", "figure"),
@@ -684,6 +849,7 @@ def build_app(results_dir: Path) -> Dash:
                 empty,
                 empty,
                 empty,
+                empty,
             )
 
         rows = payload.get("rows", [])
@@ -695,6 +861,7 @@ def build_app(results_dir: Path) -> Dash:
                 [],
                 [],
                 [],
+                empty,
                 empty,
                 empty,
                 empty,
@@ -715,6 +882,8 @@ def build_app(results_dir: Path) -> Dash:
                     "config",
                     "time_s",
                     "throughput_kbps",
+                    "throughput_be_kbps",
+                    "throughput_vo_kbps",
                     "active_tx_nodes",
                     "listening_nodes",
                     "blocking_nodes",
@@ -732,6 +901,7 @@ def build_app(results_dir: Path) -> Dash:
             _table_columns(CONFIG_SUMMARY_COLUMNS),
             comparison_display.to_dict("records"),
             _table_columns(COMPARISON_COLUMNS),
+            _plot_throughput_timeline(timeline_frame, simulation_label),
             _plot_simulation_timeline(timeline_frame, simulation_label),
             _plot_latency_profile(config_summary, simulation_label),
             _plot_jitter(config_summary, simulation_label),
@@ -741,6 +911,31 @@ def build_app(results_dir: Path) -> Dash:
             _plot_tradeoff(frame, simulation_label),
             _plot_delta_tradeoff(comparison_summary, simulation_label, baseline_used),
         )
+
+    @app.callback(
+        Output("feedback-snapshot", "value"),
+        Output("feedback-export-store", "data"),
+        Input("results-store", "data"),
+        Input("baseline-select", "value"),
+    )
+    def refresh_feedback_snapshot(payload: dict | None, baseline_config: str | None):
+        snapshot = _build_feedback_snapshot(payload, baseline_config)
+        if not snapshot:
+            return "{}", {}
+        return json.dumps(snapshot, indent=2), snapshot
+
+    @app.callback(
+        Output("download-feedback-json", "data"),
+        Input("download-feedback-button", "n_clicks"),
+        State("feedback-export-store", "data"),
+        prevent_initial_call=True,
+    )
+    def download_feedback_snapshot(_n_clicks: int, snapshot: dict | None):
+        if not snapshot:
+            return {"content": "{}", "filename": "dashboard_snapshot.json"}
+        simulation = str(snapshot.get("simulation_label", "custom")).strip().lower().replace(" ", "_")
+        filename = f"dashboard_snapshot_{simulation}.json"
+        return {"content": json.dumps(snapshot, indent=2), "filename": filename}
 
     return app
 

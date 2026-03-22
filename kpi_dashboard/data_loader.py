@@ -12,7 +12,7 @@ SCALAR_RE = re.compile(r"^scalar\s+(\S+)\s+(\S+)\s+(\S+)\s*$")
 VECTOR_HEADER_RE = re.compile(r"^vector\s+(\d+)\s+(\S+)\s+(\S+)\s+\S+\s*$")
 APP0_RE = re.compile(r"^Scenario\.node\[\d+\]\.app\[0\]$")
 APP1_RE = re.compile(r"^Scenario\.node\[\d+\]\.app\[1\]$")
-APP_MODULE_RE = re.compile(r"^Scenario\.node\[(\d+)\]\.app\[[01]\]$")
+APP_MODULE_RE = re.compile(r"^Scenario\.node\[(\d+)\]\.app\[([01])\]$")
 FSM_CONTROLLER_RE = re.compile(r"^Scenario\.node\[(\d+)\]\.wlan\[\d+\]\.mac\.hcf\.FSMController$")
 MAC_RE = re.compile(r"^Scenario\.node\[\d+\]\.wlan\[\d+\]\.mac$")
 
@@ -146,9 +146,11 @@ def parse_vec_timeseries(path: Path, bin_size_s: float = 1.0) -> List[Dict[str, 
     if not path.exists():
         return []
 
-    packet_sent_vector_to_node: Dict[str, int] = {}
+    packet_sent_vector_to_app: Dict[str, Tuple[int, int]] = {}
     state_vector_to_node: Dict[str, int] = {}
-    bits_by_bin: Dict[float, float] = {}
+    bits_by_bin_total: Dict[float, float] = {}
+    bits_by_bin_be: Dict[float, float] = {}
+    bits_by_bin_vo: Dict[float, float] = {}
     active_nodes_by_bin: Dict[float, Set[int]] = {}
     state_events_by_node: Dict[int, List[Tuple[float, int]]] = {}
 
@@ -160,7 +162,8 @@ def parse_vec_timeseries(path: Path, bin_size_s: float = 1.0) -> List[Dict[str, 
                 module_match = APP_MODULE_RE.match(module)
                 if module_match and metric == "packetSent:vector(packetBytes)":
                     node_index = int(module_match.group(1))
-                    packet_sent_vector_to_node[vector_id] = node_index
+                    app_index = int(module_match.group(2))
+                    packet_sent_vector_to_app[vector_id] = (node_index, app_index)
                 fsm_match = FSM_CONTROLLER_RE.match(module)
                 if fsm_match and metric == "v2xState:vector":
                     node_index = int(fsm_match.group(1))
@@ -176,15 +179,22 @@ def parse_vec_timeseries(path: Path, bin_size_s: float = 1.0) -> List[Dict[str, 
             if math.isnan(time_s):
                 continue
 
-            packet_node_index = packet_sent_vector_to_node.get(vector_id)
-            if packet_node_index is not None:
+            packet_source = packet_sent_vector_to_app.get(vector_id)
+            if packet_source is not None:
                 packet_bytes = _to_float(parts[3])
                 if math.isnan(packet_bytes):
                     continue
                 bin_index = int(math.floor(time_s / bin_size_s))
                 bin_time_s = float(bin_index * bin_size_s)
-                bits_by_bin[bin_time_s] = bits_by_bin.get(bin_time_s, 0.0) + (packet_bytes * 8.0)
-                active_nodes_by_bin.setdefault(bin_time_s, set()).add(packet_node_index)
+                bits = packet_bytes * 8.0
+                node_index, app_index = packet_source
+                bits_by_bin_total[bin_time_s] = bits_by_bin_total.get(bin_time_s, 0.0) + bits
+                # app[0] = BE sender app, app[1] = VO crash sender app in this project setup.
+                if app_index == 0:
+                    bits_by_bin_be[bin_time_s] = bits_by_bin_be.get(bin_time_s, 0.0) + bits
+                elif app_index == 1:
+                    bits_by_bin_vo[bin_time_s] = bits_by_bin_vo.get(bin_time_s, 0.0) + bits
+                active_nodes_by_bin.setdefault(bin_time_s, set()).add(node_index)
                 continue
 
             state_node_index = state_vector_to_node.get(vector_id)
@@ -197,7 +207,9 @@ def parse_vec_timeseries(path: Path, bin_size_s: float = 1.0) -> List[Dict[str, 
 
     rows: List[Dict[str, float]] = []
     state_nodes = sorted(state_events_by_node.keys())
-    all_bin_times = set(bits_by_bin.keys())
+    all_bin_times = set(bits_by_bin_total.keys())
+    all_bin_times.update(bits_by_bin_be.keys())
+    all_bin_times.update(bits_by_bin_vo.keys())
     for events in state_events_by_node.values():
         for event_time_s, _ in events:
             all_bin_times.add(float(int(math.floor(event_time_s / bin_size_s)) * bin_size_s))
@@ -217,7 +229,9 @@ def parse_vec_timeseries(path: Path, bin_size_s: float = 1.0) -> List[Dict[str, 
     event_pos_by_node: Dict[int, int] = {node_index: 0 for node_index in state_nodes}
 
     for bin_time_s in bin_times:
-        bits = bits_by_bin.get(bin_time_s, 0.0)
+        bits_total = bits_by_bin_total.get(bin_time_s, 0.0)
+        bits_be = bits_by_bin_be.get(bin_time_s, 0.0)
+        bits_vo = bits_by_bin_vo.get(bin_time_s, 0.0)
         active_nodes = active_nodes_by_bin.get(bin_time_s, set())
 
         listening_nodes = math.nan
@@ -250,7 +264,9 @@ def parse_vec_timeseries(path: Path, bin_size_s: float = 1.0) -> List[Dict[str, 
         rows.append(
             {
                 "time_s": bin_time_s,
-                "throughput_kbps": bits / bin_size_s / 1000.0,
+                "throughput_kbps": bits_total / bin_size_s / 1000.0,
+                "throughput_be_kbps": bits_be / bin_size_s / 1000.0,
+                "throughput_vo_kbps": bits_vo / bin_size_s / 1000.0,
                 "active_tx_nodes": float(len(active_nodes)),
                 "listening_nodes": listening_nodes,
                 "blocking_nodes": blocking_nodes,
@@ -452,6 +468,8 @@ def load_timeseries(results_dir: Path, bin_size_s: float = 1.0) -> pd.DataFrame:
                     "source_file": source_file,
                     "time_s": entry["time_s"],
                     "throughput_kbps": entry["throughput_kbps"],
+                    "throughput_be_kbps": entry.get("throughput_be_kbps", math.nan),
+                    "throughput_vo_kbps": entry.get("throughput_vo_kbps", math.nan),
                     "active_tx_nodes": entry["active_tx_nodes"],
                     "listening_nodes": entry.get("listening_nodes", math.nan),
                     "blocking_nodes": entry.get("blocking_nodes", math.nan),
@@ -467,6 +485,8 @@ def load_timeseries(results_dir: Path, bin_size_s: float = 1.0) -> pd.DataFrame:
                 "source_file",
                 "time_s",
                 "throughput_kbps",
+                "throughput_be_kbps",
+                "throughput_vo_kbps",
                 "active_tx_nodes",
                 "listening_nodes",
                 "blocking_nodes",

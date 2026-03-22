@@ -102,6 +102,28 @@ python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_
    - protection-vs-cost scatter (`BE P95 delay` vs `VO P95 delay`, marker size = `VO RX per TX`)
    - comparison-vs-baseline table (absolute + percent deltas)
    - delta protection-vs-cost scatter (`BE P95 delta` vs `VO P95 delta`)
+   - `Share With AI` section:
+   - click the copy icon to copy a JSON snapshot
+   - or click `Download Snapshot JSON`
+   - paste the snapshot in chat for feedback
+
+## Share Snapshot With AI
+
+The dashboard includes a `Share With AI` panel that generates a JSON snapshot from the currently loaded data and selected baseline.
+
+Snapshot includes:
+- simulation label
+- selected and effective baseline
+- run/config counts
+- run-level KPI rows
+- config summary table values
+- comparison vs baseline values
+
+Workflow:
+1. Load your scenario and baseline in the dashboard.
+2. Open `Share With AI`.
+3. Click copy icon (clipboard) or download JSON.
+4. Paste the JSON in chat and ask for KPI interpretation.
 
 ## Comparison View
 
@@ -133,7 +155,9 @@ The lower-right area indicates stronger VO protection with BE penalty, which is 
 - `MAC drops (queue overflow)`: sum of `packetDropQueueOverflow:count` over `Scenario.node[*].wlan[*].mac`
 - `MAC drops (retry limit)`: sum of `packetDropRetryLimitReached:count` over `Scenario.node[*].wlan[*].mac`
 - `MAC drops per app TX`: `mac_drop_count / (BE_TX + VO_TX)`
-- `Network throughput over time`: aggregated from `app[*].packetSent:vector(packetBytes)` binned per second
+- `Network throughput over time`: total aggregated from `app[*].packetSent:vector(packetBytes)` binned per second
+- `BE throughput over time`: aggregated from `app[0].packetSent:vector(packetBytes)` binned per second
+- `VO throughput over time`: aggregated from `app[1].packetSent:vector(packetBytes)` binned per second
 - `Active TX nodes over time`: count of distinct nodes with at least one app TX in each 1s bin
 - `V2X state occupancy`: count of nodes in each `V2xEdcaFsmController` state per 1s bin, from `v2xState:vector`
 
@@ -145,6 +169,10 @@ This is more honest for the current experiment because one transmission may be r
 
 The packet-drop chart and the `MAC drops per app TX` columns help check whether changes in delay/reach are coupled with stronger MAC-level losses.
 
-For node state visualization at this scale, the dashboard uses aggregated per-bin counts (active TX nodes and V2X FSM state occupancy) instead of one timeline per node, which stays readable in dense scenarios.
+The dashboard shows timeline data in two separate plots:
+- a throughput timeline split into Total, BE, and VO subplots
+- a state timeline (active TX nodes plus LISTENING/BLOCKING/SENDING occupancy)
+
+This avoids large throughput values visually compressing state-count curves.
 
 If `LISTENING/BLOCKING/SENDING` curves are missing, rerun simulations after rebuilding `veins_qos` so the new `v2xState` signal is recorded into `.vec`.
