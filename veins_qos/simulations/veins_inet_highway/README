@@ -1,0 +1,34 @@
+Veins+INET highway scenario package for the `veins_qos` study.
+
+## What Is Here
+
+- `Scenario.ned`: OMNeT++ network.
+- `omnetpp.ini`: highway experiment configs.
+- top-level scenario files: `highway.launchd.xml`, `highway.sumocfg`, `highway.net.xml`, `highway.rou.xml`, and `highway.obstacles.xml`.
+
+## Active Configs
+
+- `plain`
+- `edca_only`
+- `edca_v2x`
+
+Compatibility aliases are also available:
+- `highway_plain`
+- `highway_edca_only`
+- `highway_edca_v2x`
+
+## How To Run
+
+1. Start launch daemon:
+
+```bash
+cd /home/goaguiar/master_veins/veins/bin
+./veins_launchd -vv
+```
+
+2. Run simulation:
+
+```bash
+cd /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_highway
+./run -u Cmdenv -c edca_v2x
+```
