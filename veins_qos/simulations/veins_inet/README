@@ -3,3 +3,20 @@ Veins+INET tutorial example.
 This simulation requires sumo-launchd to be started and listening for
 connections on a TCP socket, e.g. using "~/src/veins/sumo-launchd.py -vv".
 
+Available scenario families:
+- square (default): `plain`, `veins_edca`, `veins_edca_with_cw`
+- highway corridor: `highway_plain`, `highway_veins_edca`, `highway_veins_edca_with_cw`
+
+References used for highway realism:
+- SUMO vehicle types, flows, and route definitions:
+  https://sumo.dlr.de/docs/Definition_of_Vehicles,_Vehicle_Types,_and_Routes.html
+- SUMO Enhanced IDM (EIDM):
+  https://sumo.dlr.de/docs/Car-Following-Models/EIDM.html
+- SUMO lane-changing model paper (LC2013 context):
+  https://elib.dlr.de/102254/
+- SUMO route calibration (`routeSampler.py`):
+  https://sumo.dlr.de/docs/Tools/Turns.html#routesampler-py
+- SUMO calibrator:
+  https://sumo.dlr.de/docs/Simulation/Calibrator.html
+- INET path-loss model comparison (including `TwoRayInterference`):
+  https://inet.omnetpp.org/docs/showcases/wireless/pathloss/doc/index.html

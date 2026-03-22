@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nodes>
+    <node id="west" x="0.0" y="0.0" type="priority"/>
+    <node id="merge" x="2000.0" y="0.0" type="priority"/>
+    <node id="exit" x="3200.0" y="0.0" type="priority"/>
+    <node id="east" x="5000.0" y="0.0" type="priority"/>
+    <node id="ramp_in" x="1300.0" y="-700.0" type="priority"/>
+    <node id="off_out" x="3900.0" y="700.0" type="priority"/>
+</nodes>
