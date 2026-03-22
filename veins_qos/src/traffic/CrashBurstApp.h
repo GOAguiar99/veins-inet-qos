@@ -25,6 +25,11 @@ class CrashBurstApp : public veins::VeinsInetApplicationBase
     bool crashDone = false;
     bool crashActive = false;
     uint64_t txGen = 0;
+    uint64_t voSequence = 0;
+
+    int repeatCount = 3;
+    simtime_t repeatGap = SIMTIME_ZERO;
+    simtime_t repeatJitter = SIMTIME_ZERO;
 
   protected:
     bool startApplication() override;
@@ -34,7 +39,8 @@ class CrashBurstApp : public veins::VeinsInetApplicationBase
     void resumeVehicle();
     void startCrashTraffic();
     void scheduleNext(uint64_t myGen);
-    void sendOne();
+    void sendBurst(uint64_t myGen, int sequenceNumber);
+    void sendOne(int sequenceNumber, int repeatIndex);
 
     void processPacket(std::shared_ptr<inet::Packet> pk) override;
 };

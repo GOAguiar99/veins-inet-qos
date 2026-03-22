@@ -32,6 +32,7 @@ simple CritPacketSender extends VeinsInetApplicationBase
 
         // packet naming (helps debugging)
         string packetName = default("tx");
+        double voDedupWindow @unit(s) = default(200ms);
 
         @display("i=block/app");
     gates:

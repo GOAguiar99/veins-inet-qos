@@ -185,8 +185,8 @@ The active simulation family is in `simulations/veins_inet/`.
 Files:
 - `Scenario.ned`
 - `omnetpp.ini`
-- `square.*`
-- `highway.*`
+- `square/` (launch, SUMO config, network, routes, obstacles)
+- `highway/` (launch, SUMO config, network, routes, obstacles)
 
 ### Configs in `omnetpp.ini`
 
@@ -196,28 +196,27 @@ Files:
 - DSCP tags may still exist at the application level, but they should not translate into EDCA prioritization here
 - use this as the reference case where EDCA prioritization is absent
 
-`veins_edca`
+`edca_only`
 - enables `qosStation = true`
 - uses finite per-access-category queues
 - installs the custom `QosClassifier`
-- this is the main EDCA baseline
+- this is the standard EDCA baseline on this branch
 
-`veins_edca_with_cw`
-- extends `veins_edca`
-- explicitly sets AIFSN and contention-window values per access category
-- use this when studying how parameter tuning changes prioritization strength
+`edca_v2x`
+- extends `edca_only`
+- swaps in the custom `veins_qos.mac.V2xHcf`
+- activates the local LISTENING/BLOCKING/SENDING FSM that suppresses BE requests while VO demand is active
+- this is the branch's adaptive V2X EDCA experiment
 
-`highway_plain`
-- plain DCF on the highway scenario
-- uses `TwoRayInterference` path loss
-- uses `DielectricObstacleLoss`
+`highway_edca_only`
+- standard EDCA on the highway scenario
+- uses the same propagation/environment choices as the highway baseline
 
-`highway_veins_edca`
-- EDCA on the highway scenario
-- same highway propagation/environment choices
+`highway_edca_v2x`
+- adaptive V2X EDCA on the highway scenario
+- use this to check whether the branch's MAC behavior survives more realistic propagation and mobility
 
-`highway_veins_edca_with_cw`
-- tuned EDCA on the highway scenario
+No legacy alias configs are kept in the current `.ini`; only the six active configs above are available.
 
 ## Wireless and mobility assumptions
 
@@ -317,7 +316,7 @@ Typical run flow:
 
 ```bash
 cd /home/goaguiar/master_veins/veins_qos/simulations/veins_inet
-./run -u Cmdenv -c veins_edca
+./run -u Cmdenv -c edca_v2x
 ```
 
 Notes:

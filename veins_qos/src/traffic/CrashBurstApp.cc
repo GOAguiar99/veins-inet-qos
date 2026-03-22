@@ -1,5 +1,8 @@
 #include "CrashBurstApp.h"
 
+#include <algorithm>
+
+#include "inet/common/SequenceNumberTag_m.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
 #include "inet/networklayer/common/DscpTag_m.h"
 
@@ -22,6 +25,9 @@ bool CrashBurstApp::startApplication()
     sendInterval = par("sendInterval");
     payloadBytes = par("payloadBytes").intValue();
     packetName = par("packetName").stdstringValue();
+    repeatCount = std::max(1, static_cast<int>(par("repeatCount").intValue()));
+    repeatGap = par("repeatGap");
+    repeatJitter = par("repeatJitter");
     const int myIndex = getParentModule()->getIndex();
 
     EV_INFO << "CrashBurstApp started"
@@ -32,6 +38,9 @@ bool CrashBurstApp::startApplication()
             << " resumeAfter=" << resumeAfter
             << " sendInterval=" << sendInterval
             << " payloadBytes=" << payloadBytes
+            << " repeatCount=" << repeatCount
+            << " repeatGap=" << repeatGap
+            << " repeatJitter=" << repeatJitter
             << endl;
 
     if (targetNodeIndex >= 0 && myIndex != targetNodeIndex) {
@@ -112,7 +121,7 @@ void CrashBurstApp::startCrashTraffic()
     const uint64_t myGen = ++txGen;
 
     // Start immediately at crash time, then keep periodic cadence.
-    sendOne();
+    sendBurst(myGen, static_cast<int>(voSequence++));
     scheduleNext(myGen);
 }
 
@@ -121,17 +130,39 @@ void CrashBurstApp::scheduleNext(uint64_t myGen)
     timerManager.create(
         veins::TimerSpecification([this, myGen]() {
             if (myGen != txGen || !crashActive) return;
-            sendOne();
+            sendBurst(myGen, static_cast<int>(voSequence++));
             scheduleNext(myGen);
         }).oneshotIn(sendInterval)
     );
 }
 
-void CrashBurstApp::sendOne()
+void CrashBurstApp::sendBurst(uint64_t myGen, int sequenceNumber)
 {
-    auto pk = createPacket(packetName.c_str());
+    for (int i = 0; i < repeatCount; ++i) {
+        simtime_t delay = repeatGap * i;
+        if (repeatJitter > SIMTIME_ZERO) {
+            simtime_t jitter = SimTime(uniform(-repeatJitter.dbl(), repeatJitter.dbl()));
+            delay += jitter;
+            if (delay < SIMTIME_ZERO)
+                delay = SIMTIME_ZERO;
+        }
+
+        timerManager.create(
+            veins::TimerSpecification([this, myGen, sequenceNumber, i]() {
+                if (myGen != txGen || !crashActive)
+                    return;
+                sendOne(sequenceNumber, i);
+            }).oneshotIn(delay)
+        );
+    }
+}
+
+void CrashBurstApp::sendOne(int sequenceNumber, int repeatIndex)
+{
+    auto pk = createPacket((packetName + "_" + std::to_string(sequenceNumber) + "_r" + std::to_string(repeatIndex)).c_str());
 
     pk->addTagIfAbsent<DscpReq>()->setDifferentiatedServicesCodePoint(kDscpVo);
+    pk->addTagIfAbsent<SequenceNumberReq>()->setSequenceNumber(sequenceNumber);
 
     const auto payload = makeShared<ByteCountChunk>(B(payloadBytes));
     timestampPayload(payload);
@@ -140,6 +171,8 @@ void CrashBurstApp::sendOne()
     EV_INFO << "TX " << pk->getName()
             << " bytes=" << payloadBytes
             << " dscp=" << kDscpVo
+            << " seq=" << sequenceNumber
+            << " rep=" << repeatIndex
             << " t=" << simTime()
             << endl;
 
