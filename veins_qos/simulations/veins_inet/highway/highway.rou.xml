@@ -59,40 +59,40 @@
 
     <!-- Poisson-like arrivals (period=exp(...)) avoid unrealistic lock-step platoons. -->
     <flow id="f_east_relaxed" type="car_relaxed" route="eastbound"
-          begin="1" end="95" period="exp(5.00)"
+          begin="1" end="95" period="exp(8.00)"
           departLane="free" departSpeed="desired"/>
 
     <flow id="f_east_normal" type="car_normal" route="eastbound"
-          begin="1" end="95" period="exp(2.27)"
+          begin="1" end="95" period="exp(4.20)"
           departLane="free" departSpeed="desired"/>
 
     <flow id="f_east_assertive" type="car_assertive" route="eastbound"
-          begin="1" end="95" period="exp(12.50)"
+          begin="1" end="95" period="exp(18.00)"
           departLane="free" departSpeed="desired"/>
 
     <flow id="f_east_truck" type="truck_heavy" route="eastbound"
-          begin="1" end="95" period="exp(12.50)"
+          begin="1" end="95" period="exp(20.00)"
           departLane="free" departSpeed="desired"/>
 
     <flow id="f_west_relaxed" type="car_relaxed" route="westbound"
-          begin="1" end="95" period="exp(5.30)"
+          begin="1" end="95" period="exp(8.50)"
           departLane="free" departSpeed="desired"/>
 
     <flow id="f_west_normal" type="car_normal" route="westbound"
-          begin="1" end="95" period="exp(3.00)"
+          begin="1" end="95" period="exp(5.20)"
           departLane="free" departSpeed="desired"/>
 
     <flow id="f_west_assertive" type="car_assertive" route="westbound"
-          begin="1" end="95" period="exp(14.50)"
+          begin="1" end="95" period="exp(20.00)"
           departLane="free" departSpeed="desired"/>
 
     <flow id="f_west_truck" type="truck_heavy" route="westbound"
-          begin="1" end="95" period="exp(14.50)"
+          begin="1" end="95" period="exp(22.00)"
           departLane="free" departSpeed="desired"/>
 
-    <!-- Mild demand increase around crash trigger time (30 s). -->
+    <!-- Small demand bump around crash trigger time (30 s). -->
     <flow id="f_east_peak" type="car_normal" route="eastbound"
-          begin="22" end="55" period="exp(2.20)"
+          begin="26" end="42" period="exp(5.50)"
           departLane="free" departSpeed="desired"/>
 
 </routes>
