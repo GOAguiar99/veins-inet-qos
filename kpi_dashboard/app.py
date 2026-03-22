@@ -13,6 +13,99 @@ except ImportError:
     from data_loader import load_results
 
 
+RUN_TABLE_COLUMNS = [
+    "config",
+    "run",
+    "source_file",
+    "be_delay_ms",
+    "be_delay_min_ms",
+    "be_delay_p95_ms",
+    "be_delay_max_ms",
+    "be_jitter_ms",
+    "be_rx_per_tx",
+    "be_tx_count",
+    "be_rx_count",
+    "vo_delay_ms",
+    "vo_delay_min_ms",
+    "vo_delay_p95_ms",
+    "vo_delay_max_ms",
+    "vo_jitter_ms",
+    "vo_rx_per_tx",
+    "vo_tx_count",
+    "vo_rx_count",
+]
+
+CONFIG_SUMMARY_COLUMNS = [
+    "config",
+    "runs",
+    "be_delay_ms",
+    "be_delay_min_ms",
+    "be_delay_p95_ms",
+    "be_delay_max_ms",
+    "be_jitter_ms",
+    "be_rx_per_tx",
+    "be_tx_count",
+    "be_rx_count",
+    "vo_delay_ms",
+    "vo_delay_min_ms",
+    "vo_delay_p95_ms",
+    "vo_delay_max_ms",
+    "vo_jitter_ms",
+    "vo_rx_per_tx",
+    "vo_tx_count",
+    "vo_rx_count",
+]
+
+LATENCY_PROFILE_LABELS = {
+    "be_delay_min_ms": ("BE", "Min"),
+    "be_delay_ms": ("BE", "Mean"),
+    "be_delay_p95_ms": ("BE", "P95"),
+    "be_delay_max_ms": ("BE", "Max"),
+    "vo_delay_min_ms": ("VO", "Min"),
+    "vo_delay_ms": ("VO", "Mean"),
+    "vo_delay_p95_ms": ("VO", "P95"),
+    "vo_delay_max_ms": ("VO", "Max"),
+}
+
+DISPLAY_LABELS = {
+    "config": "Config",
+    "run": "Run",
+    "runs": "Runs",
+    "source_file": "Source File",
+    "be_delay_ms": "BE Mean Delay (ms)",
+    "be_delay_min_ms": "BE Min Delay (ms)",
+    "be_delay_p95_ms": "BE P95 Delay (ms)",
+    "be_delay_max_ms": "BE Max Delay (ms)",
+    "be_jitter_ms": "BE Jitter (ms)",
+    "be_rx_per_tx": "BE RX per TX",
+    "be_tx_count": "BE TX",
+    "be_rx_count": "BE RX",
+    "vo_delay_ms": "VO Mean Delay (ms)",
+    "vo_delay_min_ms": "VO Min Delay (ms)",
+    "vo_delay_p95_ms": "VO P95 Delay (ms)",
+    "vo_delay_max_ms": "VO Max Delay (ms)",
+    "vo_jitter_ms": "VO Jitter (ms)",
+    "vo_rx_per_tx": "VO RX per TX",
+    "vo_tx_count": "VO TX",
+    "vo_rx_count": "VO RX",
+}
+
+ROUND_COLUMNS = [
+    "be_delay_ms",
+    "be_delay_min_ms",
+    "be_delay_p95_ms",
+    "be_delay_max_ms",
+    "be_jitter_ms",
+    "be_rx_per_tx",
+    "vo_delay_ms",
+    "vo_delay_min_ms",
+    "vo_delay_p95_ms",
+    "vo_delay_max_ms",
+    "vo_jitter_ms",
+    "vo_rx_per_tx",
+]
+
+
 def _default_results_dir() -> Path:
     simulations_dir = (Path(__file__).resolve().parent / ".." / "veins_qos" / "simulations").resolve()
     candidates = [
@@ -65,35 +158,118 @@ def _available_dropdown_options(selected_results_dir: Path) -> list[dict[str, st
     return options
 
 
-def _plot_delay(frame: pd.DataFrame, simulation_label: str):
+def _table_columns(column_names: list[str]) -> list[dict[str, str]]:
+    return [{"name": DISPLAY_LABELS.get(name, name), "id": name} for name in column_names]
+
+
+def _display_frame(frame: pd.DataFrame, column_order: list[str]) -> pd.DataFrame:
+    display = frame.copy()
+    for column in ROUND_COLUMNS:
+        if column in display.columns:
+            display[column] = display[column].round(6)
+    return display[column_order]
+
+
+def _build_config_summary(frame: pd.DataFrame) -> pd.DataFrame:
+    numeric_columns = [column for column in CONFIG_SUMMARY_COLUMNS if column not in {"config", "runs"}]
+    summary = (
+        frame.groupby("config", as_index=False)[numeric_columns]
+        .mean(numeric_only=True)
+        .sort_values("config")
+        .reset_index(drop=True)
+    )
+    run_counts = frame.groupby("config").size().rename("runs").reset_index()
+    return run_counts.merge(summary, on="config")[CONFIG_SUMMARY_COLUMNS]
+
+
+def _plot_latency_profile(frame: pd.DataFrame, simulation_label: str):
+    id_vars = [column for column in ("config", "run") if column in frame.columns]
+    hover_data = ["run"] if "run" in frame.columns else None
     melted = frame.melt(
-        id_vars=["config", "run"],
-        value_vars=["be_delay_ms", "vo_delay_ms"],
+        id_vars=id_vars,
+        value_vars=list(LATENCY_PROFILE_LABELS.keys()),
         var_name="metric",
         value_name="delay_ms",
     )
+    melted["traffic_class"] = melted["metric"].map(lambda metric: LATENCY_PROFILE_LABELS[metric][0])
+    melted["statistic"] = melted["metric"].map(lambda metric: LATENCY_PROFILE_LABELS[metric][1])
+
+    fig = px.bar(
+        melted,
+        x="config",
+        y="delay_ms",
+        color="statistic",
+        facet_row="traffic_class",
+        barmode="group",
+        hover_data=hover_data,
+        title=f"Latency Profile ({simulation_label})",
+    )
+    fig.for_each_annotation(lambda annotation: annotation.update(text=annotation.text.split("=")[-1]))
+    fig.update_layout(height=760, yaxis_title="Delay (ms)", xaxis_title="Config")
+    return fig
+
+
+def _plot_jitter(frame: pd.DataFrame, simulation_label: str):
+    id_vars = [column for column in ("config", "run") if column in frame.columns]
+    hover_data = ["run"] if "run" in frame.columns else None
+    melted = frame.melt(
+        id_vars=id_vars,
+        value_vars=["be_jitter_ms", "vo_jitter_ms"],
+        var_name="metric",
+        value_name="jitter_ms",
+    )
     melted["metric"] = melted["metric"].map(
         {
-            "be_delay_ms": "BE Delay (ms)",
-            "vo_delay_ms": "VO Delay (ms)",
+            "be_jitter_ms": "BE Jitter",
+            "vo_jitter_ms": "VO Jitter",
         }
     )
     fig = px.bar(
         melted,
         x="config",
-        y="delay_ms",
+        y="jitter_ms",
         color="metric",
         barmode="group",
-        hover_data=["run"],
-        title=f"End-to-End Delay ({simulation_label})",
+        hover_data=hover_data,
+        title=f"Delay Variation ({simulation_label})",
     )
-    fig.update_layout(yaxis_title="Delay (ms)", xaxis_title="Config")
+    fig.update_layout(yaxis_title="Jitter (ms)", xaxis_title="Config")
+    return fig
+
+
+def _plot_reception_efficiency(frame: pd.DataFrame, simulation_label: str):
+    id_vars = [column for column in ("config", "run") if column in frame.columns]
+    hover_data = ["run"] if "run" in frame.columns else None
+    melted = frame.melt(
+        id_vars=id_vars,
+        value_vars=["be_rx_per_tx", "vo_rx_per_tx"],
+        var_name="metric",
+        value_name="rx_per_tx",
+    )
+    melted["metric"] = melted["metric"].map(
+        {
+            "be_rx_per_tx": "BE RX per TX",
+            "vo_rx_per_tx": "VO RX per TX",
+        }
+    )
+    fig = px.bar(
+        melted,
+        x="config",
+        y="rx_per_tx",
+        color="metric",
+        barmode="group",
+        hover_data=hover_data,
+        title=f"Multicast Reach ({simulation_label})",
+    )
+    fig.update_layout(yaxis_title="Receptions per Transmission", xaxis_title="Config")
     return fig
 
 
 def _plot_counts(frame: pd.DataFrame, simulation_label: str):
+    id_vars = [column for column in ("config", "run") if column in frame.columns]
+    hover_data = ["run"] if "run" in frame.columns else None
     melted = frame.melt(
-        id_vars=["config", "run"],
+        id_vars=id_vars,
         value_vars=["be_tx_count", "be_rx_count", "vo_tx_count", "vo_rx_count"],
         var_name="metric",
         value_name="count",
@@ -112,7 +288,7 @@ def _plot_counts(frame: pd.DataFrame, simulation_label: str):
         y="count",
         color="metric",
         barmode="group",
-        hover_data=["run"],
+        hover_data=hover_data,
         title=f"TX / RX Packet Counts ({simulation_label})",
     )
     fig.update_layout(yaxis_title="Packet Count", xaxis_title="Config")
@@ -122,13 +298,17 @@ def _plot_counts(frame: pd.DataFrame, simulation_label: str):
 def _plot_tradeoff(frame: pd.DataFrame, simulation_label: str):
     fig = px.scatter(
         frame,
-        x="be_delay_ms",
-        y="vo_tx_count",
+        x="be_delay_p95_ms",
+        y="vo_delay_p95_ms",
+        size="vo_rx_per_tx",
         color="config",
         hover_name="run",
-        title=f"Trade-Off View ({simulation_label}): BE Delay vs VO TX Count",
+        title=f"Protection vs Cost ({simulation_label})",
     )
-    fig.update_layout(xaxis_title="BE Delay (ms)", yaxis_title="VO TX Count")
+    fig.update_layout(
+        xaxis_title="BE P95 Delay (ms)",
+        yaxis_title="VO P95 Delay (ms)",
+    )
     return fig
 
 
@@ -157,27 +337,46 @@ def build_app(results_dir: Path) -> Dash:
             html.Div(id="simulation-label", style={"marginBottom": "6px", "fontWeight": "bold"}),
             html.Div(id="results-source", style={"marginBottom": "12px"}),
             html.Button("Reload Results", id="reload-button", n_clicks=0),
-            html.Div(id="status", style={"marginTop": "12px", "marginBottom": "12px"}),
+            html.Div(id="status", style={"marginTop": "12px", "marginBottom": "8px"}),
+            html.Div(
+                "Jitter is computed as the mean absolute change between consecutive packet delays per receiver. "
+                "RX per TX is used instead of delivery ratio because these runs use multicast.",
+                style={"marginBottom": "16px", "color": "#4a5568"},
+            ),
+            html.H3("Config Summary"),
+            dash_table.DataTable(
+                id="config-summary-table",
+                page_size=20,
+                style_table={"overflowX": "auto"},
+                style_cell={"textAlign": "left", "padding": "6px"},
+            ),
+            html.H3("Per-Run Detail"),
             dash_table.DataTable(
                 id="summary-table",
                 page_size=20,
                 style_table={"overflowX": "auto"},
                 style_cell={"textAlign": "left", "padding": "6px"},
             ),
-            dcc.Graph(id="delay-plot"),
+            dcc.Graph(id="latency-profile-plot"),
+            dcc.Graph(id="jitter-plot"),
+            dcc.Graph(id="reception-plot"),
             dcc.Graph(id="counts-plot"),
             dcc.Graph(id="tradeoff-plot"),
         ],
-        style={"maxWidth": "1200px", "margin": "0 auto", "padding": "20px"},
+        style={"maxWidth": "1400px", "margin": "0 auto", "padding": "20px"},
     )
 
     @app.callback(
         Output("simulation-label", "children"),
         Output("results-source", "children"),
         Output("status", "children"),
+        Output("config-summary-table", "data"),
+        Output("config-summary-table", "columns"),
         Output("summary-table", "data"),
         Output("summary-table", "columns"),
-        Output("delay-plot", "figure"),
+        Output("latency-profile-plot", "figure"),
+        Output("jitter-plot", "figure"),
+        Output("reception-plot", "figure"),
         Output("counts-plot", "figure"),
         Output("tradeoff-plot", "figure"),
         Input("reload-button", "n_clicks"),
@@ -197,26 +396,32 @@ def build_app(results_dir: Path) -> Dash:
                 status,
                 [],
                 [],
+                [],
+                [],
+                empty,
+                empty,
                 empty,
                 empty,
                 empty,
             )
 
-        display = frame.copy()
-        for col in ("be_delay_ms", "vo_delay_ms", "be_delivery_ratio", "vo_delivery_ratio"):
-            display[col] = display[col].round(6)
-
-        columns = [{"name": col, "id": col} for col in display.columns]
-        status = f"Loaded {len(display)} run(s) from {results_path}"
+        config_summary = _build_config_summary(frame)
+        run_display = _display_frame(frame, RUN_TABLE_COLUMNS)
+        config_display = _display_frame(config_summary, CONFIG_SUMMARY_COLUMNS)
+        status = f"Loaded {len(frame)} run(s) across {frame['config'].nunique()} config(s) from {results_path}"
 
         return (
             f"Simulation: {simulation_label}",
             f"Results source: {results_path}",
             status,
-            display.to_dict("records"),
-            columns,
-            _plot_delay(frame, simulation_label),
-            _plot_counts(frame, simulation_label),
+            config_display.to_dict("records"),
+            _table_columns(CONFIG_SUMMARY_COLUMNS),
+            run_display.to_dict("records"),
+            _table_columns(RUN_TABLE_COLUMNS),
+            _plot_latency_profile(config_summary, simulation_label),
+            _plot_jitter(config_summary, simulation_label),
+            _plot_reception_efficiency(config_summary, simulation_label),
+            _plot_counts(config_summary, simulation_label),
             _plot_tradeoff(frame, simulation_label),
         )
 
