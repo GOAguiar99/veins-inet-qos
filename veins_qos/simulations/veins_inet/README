@@ -4,8 +4,12 @@ This simulation requires sumo-launchd to be started and listening for
 connections on a TCP socket, e.g. using "~/src/veins/sumo-launchd.py -vv".
 
 Available scenario families:
-- square (default): `plain`, `veins_edca`, `veins_edca_with_cw`
-- highway corridor: `highway_plain`, `highway_veins_edca`, `highway_veins_edca_with_cw`
+- square (default): `plain`, `edca_only`, `edca_v2x`
+- highway corridor: `highway_plain`, `highway_edca_only`, `highway_edca_v2x`
+
+Legacy compatibility aliases are also available:
+- square: `veins_edca`, `veins_edca_with_cw`
+- highway: `highway_veins_edca`, `highway_veins_edca_with_cw`
 
 References used for highway realism:
 - SUMO vehicle types, flows, and route definitions:

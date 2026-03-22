@@ -1,0 +1,4 @@
+profile,omnet_config,hcf_type,qos_station,adaptive_blocking,block_duration_ms,max_continuous_block_ms,sending_guard_timeout_ms,vo_queue_threshold,crash_send_interval_ms,repeat_count,repeat_gap_ms,repeat_jitter_ms,vo_dedup_window_ms,uppaal_role,notes
+plain,plain,DCF,false,false,0,0,0,0,100,3,20,5,200,runtime-baseline,No EDCA or adaptive blocking. Runtime baseline only.
+edca_only,edca_only,Hcf,true,false,0,0,0,1,100,3,20,5,200,runtime-baseline,Standard EDCA with fixed AC parameters and DSCP-to-UP classification.
+edca_v2x,edca_v2x,veins_qos.mac.V2xHcf,true,true,40,250,50,1,100,3,20,5,200,default-formal-model,Current branch semantics used by v2x_edca.xml and v2x_edca.q.
