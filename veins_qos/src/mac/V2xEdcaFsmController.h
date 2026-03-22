@@ -14,6 +14,7 @@ class V2xEdcaFsmController : public omnetpp::cSimpleModule
 {
   protected:
     V2xState state = V2xState::LISTENING;
+    omnetpp::simsignal_t v2xStateSignal = omnetpp::simsignal_t();
 
     omnetpp::cMessage *blockTimer = nullptr;
     omnetpp::cMessage *sendingGuardTimer = nullptr;
@@ -31,6 +32,7 @@ class V2xEdcaFsmController : public omnetpp::cSimpleModule
     virtual void refreshDisplay() const override;
 
     omnetpp::simtime_t capBlockEnd(omnetpp::simtime_t desiredEnd) const;
+    void emitStateSignal();
     void enterListening();
     void enterBlocking(omnetpp::simtime_t desiredEnd);
     void enterSending();

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import re
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Set, Tuple
 
 import pandas as pd
 
@@ -12,6 +12,9 @@ SCALAR_RE = re.compile(r"^scalar\s+(\S+)\s+(\S+)\s+(\S+)\s*$")
 VECTOR_HEADER_RE = re.compile(r"^vector\s+(\d+)\s+(\S+)\s+(\S+)\s+\S+\s*$")
 APP0_RE = re.compile(r"^Scenario\.node\[\d+\]\.app\[0\]$")
 APP1_RE = re.compile(r"^Scenario\.node\[\d+\]\.app\[1\]$")
+APP_MODULE_RE = re.compile(r"^Scenario\.node\[(\d+)\]\.app\[[01]\]$")
+FSM_CONTROLLER_RE = re.compile(r"^Scenario\.node\[(\d+)\]\.wlan\[\d+\]\.mac\.hcf\.FSMController$")
+MAC_RE = re.compile(r"^Scenario\.node\[\d+\]\.wlan\[\d+\]\.mac$")
 
 
 def _to_float(raw: str) -> float:
@@ -62,6 +65,22 @@ def _compute_jitter(values: List[float]) -> tuple[float, int]:
     for previous, current in zip(values, values[1:]):
         jitter_sum += abs(current - previous)
     return jitter_sum, len(values) - 1
+
+
+def _extract_run_metadata(path: Path) -> Tuple[str, str]:
+    configname = path.stem
+    run_name = path.stem
+
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if line.startswith("attr configname "):
+                configname = line.split(" ", 2)[2].strip()
+            elif line.startswith("run "):
+                run_name = line.split(" ", 1)[1].strip()
+            if configname != path.stem and run_name != path.stem:
+                break
+
+    return configname, run_name
 
 
 def parse_vec_file(path: Path) -> Dict[str, float]:
@@ -123,6 +142,125 @@ def parse_vec_file(path: Path) -> Dict[str, float]:
     return result
 
 
+def parse_vec_timeseries(path: Path, bin_size_s: float = 1.0) -> List[Dict[str, float]]:
+    if not path.exists():
+        return []
+
+    packet_sent_vector_to_node: Dict[str, int] = {}
+    state_vector_to_node: Dict[str, int] = {}
+    bits_by_bin: Dict[float, float] = {}
+    active_nodes_by_bin: Dict[float, Set[int]] = {}
+    state_events_by_node: Dict[int, List[Tuple[float, int]]] = {}
+
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            header_match = VECTOR_HEADER_RE.match(line)
+            if header_match:
+                vector_id, module, metric = header_match.groups()
+                module_match = APP_MODULE_RE.match(module)
+                if module_match and metric == "packetSent:vector(packetBytes)":
+                    node_index = int(module_match.group(1))
+                    packet_sent_vector_to_node[vector_id] = node_index
+                fsm_match = FSM_CONTROLLER_RE.match(module)
+                if fsm_match and metric == "v2xState:vector":
+                    node_index = int(fsm_match.group(1))
+                    state_vector_to_node[vector_id] = node_index
+                continue
+
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+
+            vector_id = parts[0]
+            time_s = _to_float(parts[2])
+            if math.isnan(time_s):
+                continue
+
+            packet_node_index = packet_sent_vector_to_node.get(vector_id)
+            if packet_node_index is not None:
+                packet_bytes = _to_float(parts[3])
+                if math.isnan(packet_bytes):
+                    continue
+                bin_index = int(math.floor(time_s / bin_size_s))
+                bin_time_s = float(bin_index * bin_size_s)
+                bits_by_bin[bin_time_s] = bits_by_bin.get(bin_time_s, 0.0) + (packet_bytes * 8.0)
+                active_nodes_by_bin.setdefault(bin_time_s, set()).add(packet_node_index)
+                continue
+
+            state_node_index = state_vector_to_node.get(vector_id)
+            if state_node_index is not None:
+                state_value = _to_float(parts[3])
+                if math.isnan(state_value):
+                    continue
+                state_events_by_node.setdefault(state_node_index, []).append((time_s, int(state_value)))
+                continue
+
+    rows: List[Dict[str, float]] = []
+    state_nodes = sorted(state_events_by_node.keys())
+    all_bin_times = set(bits_by_bin.keys())
+    for events in state_events_by_node.values():
+        for event_time_s, _ in events:
+            all_bin_times.add(float(int(math.floor(event_time_s / bin_size_s)) * bin_size_s))
+
+    if not all_bin_times:
+        return rows
+
+    max_bin_time_s = max(all_bin_times)
+    num_bins = int(round(max_bin_time_s / bin_size_s)) + 1
+    bin_times = [float(i * bin_size_s) for i in range(num_bins)]
+
+    sorted_events_by_node: Dict[int, List[Tuple[float, int]]] = {}
+    for node_index, events in state_events_by_node.items():
+        sorted_events_by_node[node_index] = sorted(events, key=lambda item: item[0])
+
+    current_state_by_node: Dict[int, int] = {node_index: 0 for node_index in state_nodes}
+    event_pos_by_node: Dict[int, int] = {node_index: 0 for node_index in state_nodes}
+
+    for bin_time_s in bin_times:
+        bits = bits_by_bin.get(bin_time_s, 0.0)
+        active_nodes = active_nodes_by_bin.get(bin_time_s, set())
+
+        listening_nodes = math.nan
+        blocking_nodes = math.nan
+        sending_nodes = math.nan
+        if state_nodes:
+            listening = 0
+            blocking = 0
+            sending = 0
+            for node_index in state_nodes:
+                events = sorted_events_by_node[node_index]
+                event_pos = event_pos_by_node[node_index]
+                while event_pos < len(events) and events[event_pos][0] <= bin_time_s:
+                    current_state_by_node[node_index] = events[event_pos][1]
+                    event_pos += 1
+                event_pos_by_node[node_index] = event_pos
+
+                node_state = current_state_by_node[node_index]
+                if node_state == 0:
+                    listening += 1
+                elif node_state == 1:
+                    blocking += 1
+                elif node_state == 2:
+                    sending += 1
+
+            listening_nodes = float(listening)
+            blocking_nodes = float(blocking)
+            sending_nodes = float(sending)
+
+        rows.append(
+            {
+                "time_s": bin_time_s,
+                "throughput_kbps": bits / bin_size_s / 1000.0,
+                "active_tx_nodes": float(len(active_nodes)),
+                "listening_nodes": listening_nodes,
+                "blocking_nodes": blocking_nodes,
+                "sending_nodes": sending_nodes,
+            }
+        )
+
+    return rows
+
+
 def parse_sca_file(path: Path) -> Dict[str, float]:
     configname = path.stem
     run_name = path.stem
@@ -145,6 +283,10 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
     vo_delay_mean_by_module: Dict[str, float] = {}
     vo_delay_min_values: List[float] = []
     vo_delay_max_values: List[float] = []
+
+    mac_drop_total = 0.0
+    mac_drop_queue_overflow_total = 0.0
+    mac_drop_retry_limit_total = 0.0
 
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         for line in handle:
@@ -190,6 +332,13 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
             elif APP1_RE.match(module):
                 if metric == "voTxPackets:count":
                     vo_tx_total += value
+            elif MAC_RE.match(module):
+                if metric == "packetDrop:count":
+                    mac_drop_total += value
+                elif metric == "packetDropQueueOverflow:count":
+                    mac_drop_queue_overflow_total += value
+                elif metric == "packetDropRetryLimitReached:count":
+                    mac_drop_retry_limit_total += value
 
     for module, count in be_delay_count_by_module.items():
         mean = be_delay_mean_by_module.get(module, math.nan)
@@ -219,6 +368,8 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
     vo_delay_p95_s = vec_stats.get("vo_delay_p95_s", math.nan)
     vo_delay_p99_s = vec_stats.get("vo_delay_p99_s", math.nan)
     vo_jitter_s = vec_stats.get("vo_jitter_s", math.nan)
+
+    app_tx_total = be_tx_total + vo_tx_total
 
     return {
         "config": configname,
@@ -260,6 +411,10 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
         "vo_rx_per_tx": (vo_rx_total / vo_tx_total) if vo_tx_total > 0 else math.nan,
         "be_delivery_ratio": (be_rx_total / be_tx_total) if be_tx_total > 0 else math.nan,
         "vo_delivery_ratio": (vo_rx_total / vo_tx_total) if vo_tx_total > 0 else math.nan,
+        "mac_drop_count": int(round(mac_drop_total)),
+        "mac_drop_queue_overflow_count": int(round(mac_drop_queue_overflow_total)),
+        "mac_drop_retry_limit_count": int(round(mac_drop_retry_limit_total)),
+        "mac_drop_per_tx": (mac_drop_total / app_tx_total) if app_tx_total > 0 else math.nan,
     }
 
 
@@ -275,3 +430,49 @@ def load_results(results_dir: Path) -> pd.DataFrame:
     frame = pd.DataFrame(rows)
     frame = frame.sort_values(["config", "run", "source_file"]).reset_index(drop=True)
     return frame
+
+
+def load_timeseries(results_dir: Path, bin_size_s: float = 1.0) -> pd.DataFrame:
+    if not results_dir.exists():
+        raise FileNotFoundError(f"Results directory not found: {results_dir}")
+
+    sca_files = sorted(results_dir.glob("*.sca"))
+    if not sca_files:
+        raise FileNotFoundError(f"No .sca files found in: {results_dir}")
+
+    rows: List[Dict[str, float | str]] = []
+    for sca_path in sca_files:
+        config, run = _extract_run_metadata(sca_path)
+        source_file = sca_path.name
+        for entry in parse_vec_timeseries(sca_path.with_suffix(".vec"), bin_size_s=bin_size_s):
+            rows.append(
+                {
+                    "config": config,
+                    "run": run,
+                    "source_file": source_file,
+                    "time_s": entry["time_s"],
+                    "throughput_kbps": entry["throughput_kbps"],
+                    "active_tx_nodes": entry["active_tx_nodes"],
+                    "listening_nodes": entry.get("listening_nodes", math.nan),
+                    "blocking_nodes": entry.get("blocking_nodes", math.nan),
+                    "sending_nodes": entry.get("sending_nodes", math.nan),
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "config",
+                "run",
+                "source_file",
+                "time_s",
+                "throughput_kbps",
+                "active_tx_nodes",
+                "listening_nodes",
+                "blocking_nodes",
+                "sending_nodes",
+            ]
+        )
+
+    frame = pd.DataFrame(rows)
+    return frame.sort_values(["config", "run", "time_s"]).reset_index(drop=True)

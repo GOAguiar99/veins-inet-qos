@@ -7,6 +7,12 @@ This dashboard reads OMNeT++ scalar files (`.sca`) and delay vectors (`.vec`) an
 - `jitter` for BE and VO
 - `multicast reach` as receptions per transmission
 - `TX/RX counts` for BE and VO
+- MAC-level packet drops (`total`, `queue overflow`, `retry limit`)
+- normalized MAC drops per application TX
+- baseline-aware KPI deltas across configs (`config - baseline`)
+- simulation-time network throughput trend
+- simulation-time node activity trend (`active TX nodes`)
+- simulation-time V2X FSM state occupancy (`LISTENING`, `BLOCKING`, `SENDING`)
 
 It is designed for fast comparisons such as `plain` vs `edca_v2x` inside one scenario package, or legacy pairs such as `highway_plain` vs `highway_edca_v2x`.
 
@@ -59,6 +65,7 @@ python app.py
 
 Inside the UI:
 - use the `Simulation` dropdown to choose which scenario package to view
+- use the `Baseline config` dropdown to select the comparison reference
 - the header shows `Simulation: ...` so it is always clear which package is loaded
 
 Open:
@@ -84,12 +91,32 @@ python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_
 2. Run adaptive config (for example `edca_v2x` or `highway_edca_v2x`) with the same seed.
 3. Open dashboard and compare:
    - confirm the selected `Simulation` label matches the scenario you want
-   - config summary table
+   - select `Baseline config` (usually `plain` or `edca_only`)
+   - config summary table (single main table)
    - latency profile chart (`min`, `mean`, `P95`, `max`)
    - jitter chart
    - multicast reach chart (`RX per TX`)
    - BE/VO TX-RX count chart
+   - packet loss / drop chart
+   - simulation timeline chart (throughput + active TX nodes over time)
    - protection-vs-cost scatter (`BE P95 delay` vs `VO P95 delay`, marker size = `VO RX per TX`)
+   - comparison-vs-baseline table (absolute + percent deltas)
+   - delta protection-vs-cost scatter (`BE P95 delta` vs `VO P95 delta`)
+
+## Comparison View
+
+The `Comparison vs Baseline` table helps answer:
+
+- Did VO improve? (`VO P95 Delta`, `VO Mean Delta`, `VO Jitter Delta` should be negative)
+- What did BE pay? (`BE P95 Delta`, `BE Mean Delta`, `BE Jitter Delta` often become positive)
+- Did multicast reach change? (`VO/BE RX per TX Delta`)
+
+The delta scatter uses:
+
+- `x = BE P95 Delta (ms)` where positive means higher BE delay cost
+- `y = VO P95 Delta (ms)` where negative means better VO protection
+
+The lower-right area indicates stronger VO protection with BE penalty, which is the expected adaptive-MAC trade-off region.
 
 ## KPI Definitions Used
 
@@ -102,9 +129,22 @@ python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_
 - `BE TX/RX`: sum of `beTxPackets:count` and `beRxPackets:count` over nodes (`app[0]`)
 - `VO TX`: sum of `voTxPackets:count` over nodes (`app[1]`)
 - `VO RX`: sum of `voRxPackets:count` over nodes (`app[0]`)
+- `MAC drops (total)`: sum of `packetDrop:count` over `Scenario.node[*].wlan[*].mac`
+- `MAC drops (queue overflow)`: sum of `packetDropQueueOverflow:count` over `Scenario.node[*].wlan[*].mac`
+- `MAC drops (retry limit)`: sum of `packetDropRetryLimitReached:count` over `Scenario.node[*].wlan[*].mac`
+- `MAC drops per app TX`: `mac_drop_count / (BE_TX + VO_TX)`
+- `Network throughput over time`: aggregated from `app[*].packetSent:vector(packetBytes)` binned per second
+- `Active TX nodes over time`: count of distinct nodes with at least one app TX in each 1s bin
+- `V2X state occupancy`: count of nodes in each `V2xEdcaFsmController` state per 1s bin, from `v2xState:vector`
 
 For multicast runs, the dashboard uses `RX per TX` instead of calling this a delivery ratio:
 - `be_rx_per_tx = BE_RX / BE_TX`
 - `vo_rx_per_tx = VO_RX / VO_TX`
 
 This is more honest for the current experiment because one transmission may be received by multiple vehicles.
+
+The packet-drop chart and the `MAC drops per app TX` columns help check whether changes in delay/reach are coupled with stronger MAC-level losses.
+
+For node state visualization at this scale, the dashboard uses aggregated per-bin counts (active TX nodes and V2X FSM state occupancy) instead of one timeline per node, which stays readable in dense scenarios.
+
+If `LISTENING/BLOCKING/SENDING` curves are missing, rerun simulations after rebuilding `veins_qos` so the new `v2xState` signal is recorded into `.vec`.

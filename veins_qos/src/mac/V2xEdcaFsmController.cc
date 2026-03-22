@@ -16,6 +16,7 @@ void V2xEdcaFsmController::initialize()
 {
     maxContinuousBlock = par("maxContinuousBlock");
     sendingGuardTimeout = par("sendingGuardTimeout");
+    v2xStateSignal = registerSignal("v2xState");
 
     blockTimer = new omnetpp::cMessage("v2xBlockTimer");
     sendingGuardTimer = new omnetpp::cMessage("v2xSendingGuardTimer");
@@ -33,6 +34,11 @@ simtime_t V2xEdcaFsmController::capBlockEnd(simtime_t desiredEnd) const
     return desiredEnd;
 }
 
+void V2xEdcaFsmController::emitStateSignal()
+{
+    emit(v2xStateSignal, static_cast<long>(state));
+}
+
 void V2xEdcaFsmController::enterListening()
 {
     state = V2xState::LISTENING;
@@ -42,6 +48,7 @@ void V2xEdcaFsmController::enterListening()
         cancelEvent(blockTimer);
     if (sendingGuardTimer->isScheduled())
         cancelEvent(sendingGuardTimer);
+    emitStateSignal();
     refreshDisplay();
 }
 
@@ -65,6 +72,7 @@ void V2xEdcaFsmController::enterBlocking(simtime_t desiredEnd)
     if (sendingGuardTimer->isScheduled())
         cancelEvent(sendingGuardTimer);
 
+    emitStateSignal();
     refreshDisplay();
 }
 
@@ -81,6 +89,7 @@ void V2xEdcaFsmController::enterSending()
             scheduleAt(simTime() + sendingGuardTimeout, sendingGuardTimer);
     }
 
+    emitStateSignal();
     refreshDisplay();
 }
 
