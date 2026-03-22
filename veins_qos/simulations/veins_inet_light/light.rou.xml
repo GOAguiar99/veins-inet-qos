@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes>
+
+    <!-- Intentionally sparse demand for quick MAC-layer validation runs. -->
+    <vType id="calm"
+           accel="2.0" decel="4.5" sigma="0.2"
+           length="4.5" minGap="2.5" maxSpeed="8"
+           color="0,1,0"/>
+
+    <vType id="aggr"
+           accel="3.0" decel="5.0" sigma="0.8"
+           length="4.5" minGap="1.5" maxSpeed="10"
+           color="1,0,0"/>
+
+    <route id="cw" edges="A0toB0 B0toB1 B1toA1 A1toA0"/>
+    <route id="ccw" edges="A0toA1 A1toB1 B1toB0 B0toA0"/>
+    <route id="cw_persistent_0" edges="A0toB0 B0toB1 B1toA1 A1toA0 A0toB0 B0toB1 B1toA1 A1toA0 A0toB0 B0toB1 B1toA1 A1toA0 A0toB0 B0toB1 B1toA1 A1toA0 A0toB0 B0toB1 B1toA1 A1toA0 A0toB0 B0toB1 B1toA1 A1toA0 A0toB0 B0toB1 B1toA1 A1toA0 A0toB0 B0toB1 B1toA1 A1toA0 A0toB0 B0toB1 B1toA1 A1toA0 A0toB0 B0toB1 B1toA1 A1toA0"/>
+    <route id="a0_to_b1" edges="A0toA1 A1toB1"/>
+    <route id="b0_to_a1" edges="B0toB1 B1toA1"/>
+
+    <!-- Keep node 0 alive for the whole run so crash traffic always has a sender. -->
+    <vehicle id="node0_light" type="calm" route="cw_persistent_0"
+             depart="0" departLane="best" departSpeed="max" arrivalPos="0"/>
+
+    <!-- A few slow background flows are enough to exercise contention without heavy load. -->
+    <flow id="f_cw_bg" type="calm" route="cw"
+          begin="5" end="95" period="16.0"
+          departLane="best" departSpeed="max" arrivalPos="0"/>
+
+    <flow id="f_ccw_bg" type="calm" route="ccw"
+          begin="8" end="95" period="18.0"
+          departLane="best" departSpeed="max" arrivalPos="0"/>
+
+    <flow id="f_cross_calm" type="calm" route="a0_to_b1"
+          begin="15" end="90" period="28.0"
+          departLane="best" departSpeed="max" arrivalPos="0"/>
+
+    <flow id="f_cross_aggr" type="aggr" route="b0_to_a1"
+          begin="20" end="90" period="35.0"
+          departLane="best" departSpeed="max" arrivalPos="0"/>
+
+</routes>

@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+
+<launch>
+    <copy file="light.net.xml" />
+    <copy file="light.rou.xml" />
+    <copy file="light.poly.xml" />
+    <copy file="light.sumocfg" type="config" />
+</launch>
