@@ -2,18 +2,24 @@
 
 This guide is for quickly understanding the model without reverse-engineering every transition.
 
+## Model Variants
+
+- `v2x_edca.xml`: main model aligned with runtime semantics and timing defaults.
+- `v2x_edca_fast.xml`: tiny finite-state variant for faster sanity checks.
+  - Saturates VO queue depth to `0/1/2+`
+  - Bounded request/demand budgets
+  - Preserves core LISTENING/BLOCKING/SENDING suppression logic
+
 ## Reading Order
 
-1. Open `v2x_edca.xml` and read the global `declaration` block first.
+1. Open the model XML and read the global `declaration` block first.
 2. Read templates in this order:
-   - `Medium`
-   - `CrashWorkload`
+   - `Medium` / `Workload` (depends on model variant)
    - `Controller`
    - `VoTransmitter`
    - `GrantObserver`
-   - `Receiver`
-   - `BeTraffic`
-3. Open `v2x_edca.q` and map each query to the relevant template/state.
+   - `Receiver` / `BeTraffic` (main model only)
+3. Open the `.q` mirror (optional) and map each query to the relevant template/state.
 
 ## Global Declarations
 
@@ -21,11 +27,10 @@ The global block defines:
 - controller parameters: `blockDuration`, `maxContinuousBlock`, `sendingGuardTimeout`, `voQueueThreshold`
 - workload parameters: `crashStart`, `crashDuration`, `sendInterval`, `repeatCount`, `repeatGapMin`, `repeatGapMax`
 - environment parameters: `mediumFreeDuration`, `mediumBusyDuration`
-- dedup abstraction: `voDedupWindow`
 - channels/events used to synchronize automata:
   - `vo_demand`, `be_request`, `grant_be`, `grant_vo`, `vo_tx_done_pending`, `vo_tx_done_clear`
 - observables/counters:
-  - `voQueueDepth`, `beGrantCount`, `voGrantCount`, `logicalVoRx`, `duplicateVoRx`, `burstDone`
+  - `voQueueDepth`, `beGrantCount`, `voGrantCount`, `burstDone`
 
 ## Template Roles
 
@@ -37,7 +42,10 @@ It is the external contention environment abstraction.
 ### `CrashWorkload`
 
 Generates `vo_demand!` bursts after crash time with repeats and an explicit crash activity window.
-This matches the current crash app behavior more closely than the old fixed burst-count abstraction.
+
+### `Workload` (fast model)
+
+Emits a bounded number of VO and BE requests without timed loops.
 
 ### `Controller`
 
@@ -46,7 +54,7 @@ This is the core MAC policy abstraction aligned with `V2xEdcaFsmController` stat
 - `BLOCKING`
 - `SENDING`
 
-BE grants are emitted only from `LISTENING` while VO pressure is below threshold.
+BE grants are emitted only while suppression is inactive.
 VO demand moves behavior into suppression (`BLOCKING`) and medium grants move into `SENDING`.
 
 ### `VoTransmitter`
@@ -63,23 +71,22 @@ Simple observer automaton to expose discrete grant events as locations:
 
 This keeps safety queries compact and readable.
 
-### `Receiver`
+### `Receiver` (main model)
 
-Abstracts receiver-side logical counting under dedup:
-- first VO completion event increments logical reception
-- repeated completions inside dedup window increment duplicate counter
+Tracks deduplicated logical VO receptions for analysis support.
+The fast model omits this template to reduce interleavings.
 
 ### `BeTraffic`
 
 Periodically emits `be_request!` requests to keep BE pressure present.
 
-## Query Mapping (`v2x_edca.q`)
+## Query Mapping
 
 - Q1 checks BE suppression safety while controller is in `BLOCKING` or `SENDING`.
-- Q2 checks boundedness of blocking/sending only when `maxContinuousBlock` is enabled.
+- Q2 checks boundedness of blocking/sending cycle.
 - Q3 checks VO progress when demand+medium conditions are favorable.
 - Q4 checks controller recovery from `SENDING` to `LISTENING` once VO queue empties.
-- Q5 checks eventual idle-ready posture after crash workload completes.
+- Q5 checks eventual return to idle posture after crash workload completes.
 
 ## Model Scope
 

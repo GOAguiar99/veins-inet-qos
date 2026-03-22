@@ -1,4 +1,5 @@
-profile,omnet_config,hcf_type,qos_station,adaptive_blocking,block_duration_ms,max_continuous_block_ms,sending_guard_timeout_ms,vo_queue_threshold,crash_at_s,resume_after_s,crash_send_interval_ms,repeat_count,repeat_gap_ms,repeat_jitter_ms,vo_dedup_window_ms,uppaal_role,notes
-plain,plain,DCF,false,false,0,0,0,0,30,30,100,3,20,5,200,runtime-baseline,No EDCA or adaptive blocking. Runtime baseline only.
-edca_only,edca_only,Hcf,true,false,0,0,0,1,30,30,100,3,20,5,200,runtime-baseline,Standard EDCA with fixed AC parameters and DSCP-to-UP classification.
-edca_v2x,edca_v2x,veins_qos.mac.V2xHcf,true,true,120,0,50,1,30,30,100,3,20,5,200,default-formal-model,Current src + veins_inet_light defaults: 3-state FSM (LISTENING/BLOCKING/SENDING), crash window from 30s to 60s.
+profile,omnet_config,hcf_type,qos_station,adaptive_blocking,block_duration_ms,max_continuous_block_ms,sending_guard_timeout_ms,vo_queue_threshold,crash_at_s,resume_after_s,crash_send_interval_ms,repeat_count,repeat_gap_ms,repeat_jitter_ms,vo_dedup_window_ms,uppaal_role,model_file,notes
+plain,plain,DCF,false,false,0,0,0,0,30,30,100,3,20,5,200,runtime-baseline,v2x_edca.xml,No EDCA or adaptive blocking. Runtime baseline only.
+edca_only,edca_only,Hcf,true,false,0,0,0,1,30,30,100,3,20,5,200,runtime-baseline,v2x_edca.xml,Standard EDCA with fixed AC parameters and DSCP-to-UP classification.
+edca_v2x,edca_v2x,veins_qos.mac.V2xHcf,true,true,120,0,50,1,30,30,100,3,20,5,200,default-formal-model,v2x_edca.xml,Current src + veins_inet_light defaults: 3-state FSM (LISTENING/BLOCKING/SENDING), crash window from 30s to 60s.
+edca_v2x_fast,edca_v2x,veins_qos.mac.V2xHcf,true,true,n/a,n/a,n/a,1,n/a,n/a,n/a,n/a,n/a,n/a,n/a,fast-formal-model,v2x_edca_fast.xml,Tiny finite-state abstraction for quick sanity checks of suppression safety/progress/recovery.

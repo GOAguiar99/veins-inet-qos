@@ -47,3 +47,7 @@ results/
 *.qtenvrc
 *.elog
 *.anf
+
+# Secrets / local env files
+.env
+**/.env

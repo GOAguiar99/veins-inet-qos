@@ -12,8 +12,9 @@ UPPAAL here is verification support, not a runtime MAC replacement.
 
 ## Files
 
-- `v2x_edca.xml`: timed automata model
-- `v2x_edca.q`: verification queries
+- `v2x_edca.xml`: timed automata model (with embedded verification queries)
+- `v2x_edca_fast.xml`: tiny finite-state timed automata model for fast sanity checks
+- `v2x_edca.q`: query mirror/reference text
 - `MODEL_GUIDE.md`: reading guide
 - `parameter_matrix.csv`: mapping between OMNeT++ configs and formal parameters
 - `run_verifyta.sh`: helper runner
@@ -29,6 +30,14 @@ Optional profile argument:
 
 ```bash
 ./uppaal/run_verifyta.sh edca_v2x
+./uppaal/run_verifyta.sh edca_v2x_fast
+```
+
+Optional license key setup:
+
+```bash
+cp uppaal/.env.example uppaal/.env
+# edit uppaal/.env and set UPPAAL_LICENSE_KEY only if your local verifyta setup needs it
 ```
 
 ## Important Clarifications

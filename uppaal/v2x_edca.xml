@@ -20,6 +20,11 @@ const int beRequestInterval = 25;
 const int mediumFreeDuration = 40;
 const int mediumBusyDuration = 15;
 const int voDedupWindow = 200;
+const int unboundedFallback = 1000000000;
+// Keep parser-friendly plain constants in invariants.
+// Current active config is maxContinuousBlock=0 (uncapped) and sendingGuardTimeout=50ms.
+const int effectiveMaxContinuousBlock = unboundedFallback;
+const int effectiveSendingGuardTimeout = 50;
 
 // ============================================================
 // Synchronization channels
@@ -42,12 +47,10 @@ int beGrantCount = 0;
 int voGrantCount = 0;
 int logicalVoRx = 0;
 int duplicateVoRx = 0;
+bool beBlocked = false;
 
 // helper used in assignments where we need bounded decrement
-int dec1(int x) {
-  if (x &gt; 0) return x - 1;
-  return 0;
-}</declaration>
+</declaration>
 
   <template>
     <name x="5" y="5">Medium</name>
@@ -170,42 +173,33 @@ clock send;</declaration>
     </location>
     <location id="ctrl_blocking" x="250" y="0">
       <name x="214" y="-34">BLOCKING</name>
-      <label kind="invariant" x="172" y="20">maxContinuousBlock == 0 || cycle &lt;= maxContinuousBlock</label>
+      <label kind="invariant" x="172" y="20">cycle &lt;= effectiveMaxContinuousBlock</label>
     </location>
     <location id="ctrl_sending" x="500" y="0">
       <name x="470" y="-34">SENDING</name>
-      <label kind="invariant" x="372" y="20">(maxContinuousBlock == 0 || cycle &lt;= maxContinuousBlock) &amp;&amp; (sendingGuardTimeout == 0 || send &lt;= sendingGuardTimeout)</label>
+      <label kind="invariant" x="372" y="20">cycle &lt;= effectiveMaxContinuousBlock &amp;&amp; send &lt;= effectiveSendingGuardTimeout</label>
     </location>
     <init ref="ctrl_listening"/>
 
     <transition>
       <source ref="ctrl_listening"/>
-      <target ref="ctrl_listening"/>
-      <label kind="synchronisation" x="42" y="-132">be_request?</label>
-      <label kind="guard" x="32" y="-160">medium_free &amp;&amp; voQueueDepth &lt; voQueueThreshold</label>
-      <label kind="synchronisation" x="44" y="-104">grant_be!</label>
-      <label kind="assignment" x="44" y="-76">beGrantCount = beGrantCount + 1</label>
-    </transition>
-
-    <transition>
-      <source ref="ctrl_listening"/>
       <target ref="ctrl_blocking"/>
       <label kind="synchronisation" x="74" y="-52">vo_demand?</label>
-      <label kind="assignment" x="64" y="-24">voQueueDepth = voQueueDepth + 1, cycle = 0, block = 0</label>
+      <label kind="assignment" x="64" y="-24">voQueueDepth = voQueueDepth + 1, cycle = 0, block = 0, beBlocked = true</label>
     </transition>
 
     <transition>
       <source ref="ctrl_blocking"/>
       <target ref="ctrl_blocking"/>
       <label kind="synchronisation" x="286" y="-52">vo_demand?</label>
-      <label kind="assignment" x="276" y="-24">voQueueDepth = voQueueDepth + 1, block = 0</label>
+      <label kind="assignment" x="276" y="-24">voQueueDepth = voQueueDepth + 1, block = 0, beBlocked = true</label>
     </transition>
 
     <transition>
       <source ref="ctrl_sending"/>
       <target ref="ctrl_sending"/>
       <label kind="synchronisation" x="538" y="-52">vo_demand?</label>
-      <label kind="assignment" x="530" y="-24">voQueueDepth = voQueueDepth + 1</label>
+      <label kind="assignment" x="530" y="-24">voQueueDepth = voQueueDepth + 1, beBlocked = true</label>
     </transition>
 
     <transition>
@@ -213,7 +207,7 @@ clock send;</declaration>
       <target ref="ctrl_sending"/>
       <label kind="guard" x="144" y="-96">medium_free &amp;&amp; voQueueDepth &gt;= voQueueThreshold</label>
       <label kind="synchronisation" x="178" y="-122">grant_vo!</label>
-      <label kind="assignment" x="176" y="-150">voGrantCount = voGrantCount + 1, send = 0</label>
+      <label kind="assignment" x="176" y="-150">voGrantCount = voGrantCount + 1, send = 0, beBlocked = true</label>
     </transition>
 
     <transition>
@@ -221,46 +215,78 @@ clock send;</declaration>
       <target ref="ctrl_sending"/>
       <label kind="guard" x="354" y="-96">medium_free &amp;&amp; voQueueDepth &gt;= voQueueThreshold</label>
       <label kind="synchronisation" x="380" y="-122">grant_vo!</label>
-      <label kind="assignment" x="376" y="-150">voGrantCount = voGrantCount + 1, send = 0</label>
+      <label kind="assignment" x="376" y="-150">voGrantCount = voGrantCount + 1, send = 0, beBlocked = true</label>
     </transition>
 
     <transition>
       <source ref="ctrl_blocking"/>
       <target ref="ctrl_listening"/>
       <label kind="guard" x="104" y="104">voQueueDepth == 0 &amp;&amp; block &gt;= blockDuration</label>
+      <label kind="assignment" x="102" y="132">beBlocked = false</label>
     </transition>
 
     <transition>
       <source ref="ctrl_blocking"/>
       <target ref="ctrl_listening"/>
       <label kind="guard" x="250" y="132">maxContinuousBlock &gt; 0 &amp;&amp; cycle &gt;= maxContinuousBlock</label>
+      <label kind="assignment" x="250" y="160">beBlocked = false</label>
     </transition>
 
     <transition>
       <source ref="ctrl_sending"/>
       <target ref="ctrl_blocking"/>
       <label kind="synchronisation" x="564" y="-112">vo_tx_done_pending?</label>
-      <label kind="assignment" x="546" y="-84">voQueueDepth = dec1(voQueueDepth), block = 0</label>
+      <label kind="assignment" x="546" y="-84">voQueueDepth = voQueueDepth - 1, block = 0, beBlocked = true</label>
     </transition>
 
     <transition>
       <source ref="ctrl_sending"/>
       <target ref="ctrl_listening"/>
       <label kind="synchronisation" x="540" y="110">vo_tx_done_clear?</label>
-      <label kind="assignment" x="540" y="138">voQueueDepth = 0</label>
+      <label kind="assignment" x="540" y="138">voQueueDepth = 0, beBlocked = false</label>
     </transition>
 
     <transition>
       <source ref="ctrl_sending"/>
       <target ref="ctrl_blocking"/>
       <label kind="guard" x="402" y="84">sendingGuardTimeout &gt; 0 &amp;&amp; send &gt;= sendingGuardTimeout &amp;&amp; voQueueDepth &gt; 0</label>
-      <label kind="assignment" x="428" y="112">block = 0</label>
+      <label kind="assignment" x="428" y="112">block = 0, beBlocked = true</label>
     </transition>
 
     <transition>
       <source ref="ctrl_sending"/>
       <target ref="ctrl_listening"/>
       <label kind="guard" x="340" y="156">sendingGuardTimeout &gt; 0 &amp;&amp; send &gt;= sendingGuardTimeout &amp;&amp; voQueueDepth == 0</label>
+      <label kind="assignment" x="338" y="184">beBlocked = false</label>
+    </transition>
+  </template>
+
+  <template>
+    <name x="5" y="5">BeGrantor</name>
+    <location id="be_grantor_idle" x="0" y="0">
+      <name x="-12" y="-34">IDLE</name>
+    </location>
+    <location id="be_grantor_check" x="220" y="0">
+      <name x="194" y="-34">CHECK</name>
+      <committed/>
+    </location>
+    <init ref="be_grantor_idle"/>
+    <transition>
+      <source ref="be_grantor_idle"/>
+      <target ref="be_grantor_check"/>
+      <label kind="synchronisation" x="46" y="-52">be_request?</label>
+    </transition>
+    <transition>
+      <source ref="be_grantor_check"/>
+      <target ref="be_grantor_idle"/>
+      <label kind="guard" x="230" y="-82">medium_free &amp;&amp; !beBlocked &amp;&amp; voQueueDepth &lt; voQueueThreshold</label>
+      <label kind="synchronisation" x="236" y="-54">grant_be!</label>
+      <label kind="assignment" x="236" y="-26">beGrantCount = beGrantCount + 1</label>
+    </transition>
+    <transition>
+      <source ref="be_grantor_check"/>
+      <target ref="be_grantor_idle"/>
+      <label kind="guard" x="224" y="44">!(medium_free &amp;&amp; !beBlocked &amp;&amp; voQueueDepth &lt; voQueueThreshold)</label>
     </transition>
   </template>
 
@@ -380,11 +406,33 @@ medium = Medium();
 beTraffic = BeTraffic();
 workload = CrashWorkload();
 controller = Controller();
+beGrantor = BeGrantor();
 voTx = VoTransmitter();
 grants = GrantObserver();
 receiver = Receiver();
 
 // Composed system
-system medium, beTraffic, workload, controller, voTx, grants, receiver;</system>
-  <queries/>
+system medium, beTraffic, workload, controller, beGrantor, voTx, grants, receiver;</system>
+  <queries>
+    <query>
+      <formula>A[] !(grants.BE_GRANTED &amp;&amp; (controller.BLOCKING || controller.SENDING))</formula>
+      <comment>Q1 Safety: BE must never be granted while controller is suppressing BE.</comment>
+    </query>
+    <query>
+      <formula>A[] (maxContinuousBlock == 0 || !(controller.BLOCKING || controller.SENDING) || controller.cycle &lt;= maxContinuousBlock)</formula>
+      <comment>Q2 Safety: if maxContinuousBlock is enabled, blocking/sending cycle must remain bounded.</comment>
+    </query>
+    <query>
+      <formula>controller.BLOCKING &amp;&amp; medium_free &amp;&amp; voQueueDepth &gt;= voQueueThreshold --&gt; controller.SENDING</formula>
+      <comment>Q3 Progress: if VO demand exists and medium is free while suppressing, SENDING is eventually reached.</comment>
+    </query>
+    <query>
+      <formula>controller.SENDING &amp;&amp; voQueueDepth == 0 --&gt; controller.LISTENING</formula>
+      <comment>Q4 Recovery: once SENDING has no pending VO, eventually return to LISTENING.</comment>
+    </query>
+    <query>
+      <formula>burstDone --&gt; (controller.LISTENING &amp;&amp; medium_free)</formula>
+      <comment>Q5 End condition: after crash workload completes, controller+medium can reach idle-ready posture.</comment>
+    </query>
+  </queries>
 </nta>

@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC "-//Uppaal Team//DTD Flat System 1.1//EN" "http://www.it.uu.se/research/group/darts/uppaal/flat-1_2.dtd">
+<nta>
+  <declaration>// ============================================================
+// Fast profile: tiny finite-state abstraction for quick checks
+// ============================================================
+const int voQueueThreshold = 1;
+const int initialVoBursts = 4;
+const int initialBeRequests = 8;
+
+broadcast chan vo_demand;
+broadcast chan be_request;
+broadcast chan grant_be;
+broadcast chan grant_vo;
+broadcast chan vo_tx_done_pending;
+broadcast chan vo_tx_done_clear;
+
+bool medium_free = true; // fixed true in fast profile to remove timing/environment explosion
+bool burstDone = false;
+int[0,2] voQueueDepth = 0; // 0,1,2 where 2 means "2 or more"
+int beGrantCount = 0;
+int voGrantCount = 0;
+bool beBlocked = false;
+
+int[0,16] voBudget = initialVoBursts;
+int[0,16] beBudget = initialBeRequests;</declaration>
+
+  <template>
+    <name x="5" y="5">Workload</name>
+    <location id="w_active" x="0" y="0">
+      <name x="-20" y="-34">ACTIVE</name>
+    </location>
+    <location id="w_done" x="220" y="0">
+      <name x="204" y="-34">DONE</name>
+    </location>
+    <init ref="w_active"/>
+
+    <transition>
+      <source ref="w_active"/>
+      <target ref="w_active"/>
+      <label kind="guard" x="32" y="-82">voBudget &gt; 0</label>
+      <label kind="synchronisation" x="36" y="-54">vo_demand!</label>
+      <label kind="assignment" x="36" y="-26">voBudget = voBudget - 1</label>
+    </transition>
+
+    <transition>
+      <source ref="w_active"/>
+      <target ref="w_active"/>
+      <label kind="guard" x="34" y="54">beBudget &gt; 0</label>
+      <label kind="synchronisation" x="36" y="82">be_request!</label>
+      <label kind="assignment" x="36" y="110">beBudget = beBudget - 1</label>
+    </transition>
+
+    <transition>
+      <source ref="w_active"/>
+      <target ref="w_done"/>
+      <label kind="guard" x="88" y="-20">voBudget == 0 &amp;&amp; beBudget == 0</label>
+      <label kind="assignment" x="82" y="8">burstDone = true</label>
+    </transition>
+  </template>
+
+  <template>
+    <name x="5" y="5">Controller</name>
+    <location id="ctrl_listening" x="0" y="0">
+      <name x="-36" y="-34">LISTENING</name>
+    </location>
+    <location id="ctrl_blocking" x="250" y="0">
+      <name x="214" y="-34">BLOCKING</name>
+    </location>
+    <location id="ctrl_sending" x="500" y="0">
+      <name x="470" y="-34">SENDING</name>
+    </location>
+    <init ref="ctrl_listening"/>
+
+    <transition>
+      <source ref="ctrl_listening"/>
+      <target ref="ctrl_blocking"/>
+      <label kind="guard" x="56" y="-82">voQueueDepth &lt; 2</label>
+      <label kind="synchronisation" x="74" y="-54">vo_demand?</label>
+      <label kind="assignment" x="64" y="-26">voQueueDepth = voQueueDepth + 1, beBlocked = true</label>
+    </transition>
+    <transition>
+      <source ref="ctrl_listening"/>
+      <target ref="ctrl_blocking"/>
+      <label kind="guard" x="58" y="54">voQueueDepth == 2</label>
+      <label kind="synchronisation" x="74" y="82">vo_demand?</label>
+      <label kind="assignment" x="64" y="110">beBlocked = true</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_blocking"/>
+      <target ref="ctrl_blocking"/>
+      <label kind="guard" x="274" y="-82">voQueueDepth &lt; 2</label>
+      <label kind="synchronisation" x="286" y="-54">vo_demand?</label>
+      <label kind="assignment" x="276" y="-26">voQueueDepth = voQueueDepth + 1, beBlocked = true</label>
+    </transition>
+    <transition>
+      <source ref="ctrl_blocking"/>
+      <target ref="ctrl_blocking"/>
+      <label kind="guard" x="274" y="54">voQueueDepth == 2</label>
+      <label kind="synchronisation" x="286" y="82">vo_demand?</label>
+      <label kind="assignment" x="276" y="110">beBlocked = true</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_sending"/>
+      <target ref="ctrl_sending"/>
+      <label kind="guard" x="526" y="-82">voQueueDepth &lt; 2</label>
+      <label kind="synchronisation" x="538" y="-54">vo_demand?</label>
+      <label kind="assignment" x="530" y="-26">voQueueDepth = voQueueDepth + 1, beBlocked = true</label>
+    </transition>
+    <transition>
+      <source ref="ctrl_sending"/>
+      <target ref="ctrl_sending"/>
+      <label kind="guard" x="526" y="54">voQueueDepth == 2</label>
+      <label kind="synchronisation" x="538" y="82">vo_demand?</label>
+      <label kind="assignment" x="530" y="110">beBlocked = true</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_listening"/>
+      <target ref="ctrl_sending"/>
+      <label kind="guard" x="146" y="-96">medium_free &amp;&amp; voQueueDepth &gt;= voQueueThreshold</label>
+      <label kind="synchronisation" x="178" y="-122">grant_vo!</label>
+      <label kind="assignment" x="176" y="-150">voGrantCount = voGrantCount + 1, beBlocked = true</label>
+    </transition>
+    <transition>
+      <source ref="ctrl_blocking"/>
+      <target ref="ctrl_sending"/>
+      <label kind="guard" x="356" y="-96">medium_free &amp;&amp; voQueueDepth &gt;= voQueueThreshold</label>
+      <label kind="synchronisation" x="380" y="-122">grant_vo!</label>
+      <label kind="assignment" x="376" y="-150">voGrantCount = voGrantCount + 1, beBlocked = true</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_blocking"/>
+      <target ref="ctrl_listening"/>
+      <label kind="guard" x="106" y="104">voQueueDepth == 0</label>
+      <label kind="assignment" x="106" y="132">beBlocked = false</label>
+    </transition>
+
+    <transition>
+      <source ref="ctrl_sending"/>
+      <target ref="ctrl_blocking"/>
+      <label kind="synchronisation" x="562" y="-112">vo_tx_done_pending?</label>
+      <label kind="assignment" x="548" y="-84">voQueueDepth = 1, beBlocked = true</label>
+    </transition>
+    <transition>
+      <source ref="ctrl_sending"/>
+      <target ref="ctrl_listening"/>
+      <label kind="synchronisation" x="540" y="110">vo_tx_done_clear?</label>
+      <label kind="assignment" x="540" y="138">voQueueDepth = 0, beBlocked = false</label>
+    </transition>
+  </template>
+
+  <template>
+    <name x="5" y="5">BeGrantor</name>
+    <location id="bg_idle" x="0" y="0">
+      <name x="-12" y="-34">IDLE</name>
+    </location>
+    <location id="bg_check" x="220" y="0">
+      <name x="194" y="-34">CHECK</name>
+      <committed/>
+    </location>
+    <init ref="bg_idle"/>
+    <transition>
+      <source ref="bg_idle"/>
+      <target ref="bg_check"/>
+      <label kind="synchronisation" x="46" y="-52">be_request?</label>
+    </transition>
+    <transition>
+      <source ref="bg_check"/>
+      <target ref="bg_idle"/>
+      <label kind="guard" x="230" y="-82">medium_free &amp;&amp; !beBlocked &amp;&amp; voQueueDepth &lt; voQueueThreshold</label>
+      <label kind="synchronisation" x="236" y="-54">grant_be!</label>
+      <label kind="assignment" x="236" y="-26">beGrantCount = beGrantCount + 1</label>
+    </transition>
+    <transition>
+      <source ref="bg_check"/>
+      <target ref="bg_idle"/>
+      <label kind="guard" x="224" y="44">!(medium_free &amp;&amp; !beBlocked &amp;&amp; voQueueDepth &lt; voQueueThreshold)</label>
+    </transition>
+  </template>
+
+  <template>
+    <name x="5" y="5">VoTransmitter</name>
+    <location id="tx_idle" x="0" y="0">
+      <name x="-10" y="-34">IDLE</name>
+    </location>
+    <location id="tx_busy" x="220" y="0">
+      <name x="196" y="-34">TX</name>
+      <committed/>
+    </location>
+    <init ref="tx_idle"/>
+    <transition>
+      <source ref="tx_idle"/>
+      <target ref="tx_busy"/>
+      <label kind="synchronisation" x="46" y="-54">grant_vo?</label>
+    </transition>
+    <transition>
+      <source ref="tx_busy"/>
+      <target ref="tx_idle"/>
+      <label kind="guard" x="262" y="-54">voQueueDepth &gt; 1</label>
+      <label kind="synchronisation" x="262" y="-26">vo_tx_done_pending!</label>
+    </transition>
+    <transition>
+      <source ref="tx_busy"/>
+      <target ref="tx_idle"/>
+      <label kind="guard" x="262" y="52">voQueueDepth &lt;= 1</label>
+      <label kind="synchronisation" x="262" y="80">vo_tx_done_clear!</label>
+    </transition>
+  </template>
+
+  <template>
+    <name x="5" y="5">GrantObserver</name>
+    <location id="go_idle" x="0" y="0">
+      <name x="-12" y="-34">IDLE</name>
+    </location>
+    <location id="go_be" x="220" y="-80">
+      <name x="186" y="-114">BE_GRANTED</name>
+      <committed/>
+    </location>
+    <location id="go_vo" x="220" y="80">
+      <name x="188" y="110">VO_GRANTED</name>
+      <committed/>
+    </location>
+    <init ref="go_idle"/>
+    <transition>
+      <source ref="go_idle"/>
+      <target ref="go_be"/>
+      <label kind="synchronisation" x="46" y="-110">grant_be?</label>
+    </transition>
+    <transition>
+      <source ref="go_be"/>
+      <target ref="go_idle"/>
+    </transition>
+    <transition>
+      <source ref="go_idle"/>
+      <target ref="go_vo"/>
+      <label kind="synchronisation" x="42" y="110">grant_vo?</label>
+    </transition>
+    <transition>
+      <source ref="go_vo"/>
+      <target ref="go_idle"/>
+    </transition>
+  </template>
+
+  <system>// Instance bindings
+workload = Workload();
+controller = Controller();
+beGrantor = BeGrantor();
+voTx = VoTransmitter();
+grants = GrantObserver();
+
+// Composed system
+system workload, controller, beGrantor, voTx, grants;</system>
+
+  <queries>
+    <query>
+      <formula>A[] !(grants.BE_GRANTED &amp;&amp; (controller.BLOCKING || controller.SENDING))</formula>
+      <comment>Q1 Safety (fast): BE is never granted while suppression is active.</comment>
+    </query>
+    <query>
+      <formula>controller.BLOCKING &amp;&amp; medium_free &amp;&amp; voQueueDepth &gt;= voQueueThreshold --&gt; controller.SENDING</formula>
+      <comment>Q2 Progress (fast): blocking with VO demand reaches sending.</comment>
+    </query>
+    <query>
+      <formula>controller.SENDING &amp;&amp; voQueueDepth == 0 --&gt; controller.LISTENING</formula>
+      <comment>Q3 Recovery (fast): controller returns to listening after VO clears.</comment>
+    </query>
+    <query>
+      <formula>burstDone --&gt; controller.LISTENING</formula>
+      <comment>Q4 End (fast): eventually listening after workload completion.</comment>
+    </query>
+  </queries>
+</nta>
