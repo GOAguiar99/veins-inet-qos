@@ -32,7 +32,6 @@
 -->
 
 <launch>
-    <basedir path="square"/>
     <copy file="square.net.xml" />
     <copy file="square.rou.xml" />
     <copy file="square.poly.xml" />

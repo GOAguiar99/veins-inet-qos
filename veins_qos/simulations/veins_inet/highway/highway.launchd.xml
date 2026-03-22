@@ -1,6 +1,5 @@
 <?xml version="1.0"?>
 <launch>
-    <basedir path="highway"/>
     <copy file="highway.net.xml" />
     <copy file="highway.rou.xml" />
     <copy file="highway.sumocfg" type="config" />
