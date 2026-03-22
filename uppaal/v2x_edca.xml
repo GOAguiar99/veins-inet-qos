@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE nta PUBLIC "-//Uppaal Team//DTD Flat System 1.1//EN" "http://www.it.uu.se/research/group/darts/uppaal/flat-1_2.dtd">
 <nta>
-  <declaration>// Default parameter set matches the edca_v2x branch profile.
+  <declaration>// ============================================================
+// Parameters
+// ============================================================
+// Default parameter set matches the `edca_v2x` branch profile.
 const int blockDuration = 40;
 const int maxContinuousBlock = 250;
 const int sendingGuardTimeout = 50;
@@ -19,12 +22,18 @@ const int mediumFreeDuration = 40;
 const int mediumBusyDuration = 15;
 const int voDedupWindow = 200;
 
+// ============================================================
+// Synchronization channels
+// ============================================================
 broadcast chan vo_demand;
 broadcast chan be_request;
 broadcast chan grant_be;
 broadcast chan grant_vo;
 broadcast chan vo_tx_done;
 
+// ============================================================
+// Shared observables/counters
+// ============================================================
 bool medium_free = true;
 bool burstDone = false;
 int voQueueDepth = 0;
@@ -328,13 +337,15 @@ clock send;</declaration>
       <label kind="guard" x="340" y="156">send &gt;= sendingGuardTimeout &amp;&amp; voQueueDepth == 0</label>
     </transition>
   </template>
-  <system>medium = Medium();
+  <system>// Instance bindings
+medium = Medium();
 beTraffic = BeTraffic();
 workload = CrashWorkload();
 grants = GrantObserver();
 receiver = Receiver();
 controller = Controller();
 
+// Composed system
 system medium, beTraffic, workload, grants, receiver, controller;</system>
   <queries/>
 </nta>

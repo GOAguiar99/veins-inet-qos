@@ -10,6 +10,7 @@ Scope:
 Files:
 - `v2x_edca.xml`: timed-automata model of the branch's controller and a small environment abstraction
 - `v2x_edca.q`: symbolic queries for the safety and liveness properties we care about
+- `MODEL_GUIDE.md`: reader-oriented walkthrough of variables, templates, and query intent
 - `parameter_matrix.csv`: checked-in experiment matrix tying OMNeT++ configs to the formal model parameters
 - `run_verifyta.sh`: helper script that invokes `verifyta`
 
