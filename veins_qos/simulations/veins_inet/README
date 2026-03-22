@@ -7,9 +7,9 @@ Available scenario families:
 - square (default): `plain`, `edca_only`, `edca_v2x`
 - highway corridor: `highway_plain`, `highway_edca_only`, `highway_edca_v2x`
 
-Legacy compatibility aliases are also available:
-- square: `veins_edca`, `veins_edca_with_cw`
-- highway: `highway_veins_edca`, `highway_veins_edca_with_cw`
+Scenario assets are organized by folder:
+- `square/`: `square.launchd.xml`, `square.sumocfg`, network/routes/obstacles
+- `highway/`: `highway.launchd.xml`, `highway.sumocfg`, network/routes/obstacles
 
 References used for highway realism:
 - SUMO vehicle types, flows, and route definitions:

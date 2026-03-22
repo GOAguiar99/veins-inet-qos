@@ -185,8 +185,8 @@ The active simulation family is in `simulations/veins_inet/`.
 Files:
 - `Scenario.ned`
 - `omnetpp.ini`
-- `square.*`
-- `highway.*`
+- `square/` (launch, SUMO config, network, routes, obstacles)
+- `highway/` (launch, SUMO config, network, routes, obstacles)
 
 ### Configs in `omnetpp.ini`
 
@@ -216,9 +216,7 @@ Files:
 - adaptive V2X EDCA on the highway scenario
 - use this to check whether the branch's MAC behavior survives more realistic propagation and mobility
 
-Legacy aliases still exist for compatibility:
-- `veins_edca` and `veins_edca_with_cw` map to `edca_only`
-- `highway_veins_edca` and `highway_veins_edca_with_cw` map to `highway_edca_only`
+No legacy alias configs are kept in the current `.ini`; only the six active configs above are available.
 
 ## Wireless and mobility assumptions
 
