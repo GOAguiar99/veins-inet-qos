@@ -1,16 +1,56 @@
 # Crash-Aware EDCA Traffic for Veins
 
-This project provides a **minimal setup to evaluate IEEE 802.11e EDCA behavior in Veins**.
+This repository contains a master's-project workspace focused on one question:
 
-It generates **normal Best Effort (BE)** traffic and switches to **Voice (VO)** traffic when a crash event occurs, allowing direct observation of EDCA prioritization under congestion.
+Can crash-critical packets (VO) get better service than normal traffic (BE) in Veins/INET Wi-Fi simulations, and what is the BE penalty?
 
-Project context for future AI/code sessions: see [`veins_qos/AI_CONTEXT.md`](veins_qos/AI_CONTEXT.md).
+The active project is `veins_qos/`.
 
-The focus is **only** on:
-- BE vs VO differentiation
-- Crash-triggered priority escalation
-- Clean, deterministic EDCA evaluation
+## Repository Structure
 
-No extra QoS logic, no policy frameworks, no side effects.
+- `veins_qos/`: active code, scenarios, and configs.
+- `kpi_dashboard/`: Dash app for KPI visualization from `.sca` files.
+- `uppaal/`: offline timed-automata model + queries for MAC-policy verification.
+- `inet/`, `veins/`, `omnetpp-6.1/`: framework/dependency trees.
+- `ap_servers/`: old project, not part of the current study line.
 
-Intended use: **measure whether crash packets actually get VO treatment in Veins/INET Wi-Fi simulations**.
+For AI/dev context details, see [`veins_qos/AI_CONTEXT.md`](veins_qos/AI_CONTEXT.md).
+
+## Current Experiment Matrix
+
+Active OMNeT++ configs (`veins_qos/simulations/veins_inet/omnetpp.ini`):
+
+- square: `plain`, `edca_only`, `edca_v2x`
+- highway: `highway_plain`, `highway_edca_only`, `highway_edca_v2x`
+
+## Quick Start
+
+1. Start Veins launch daemon:
+
+```bash
+cd /home/goaguiar/master_veins/veins/bin
+./veins_launchd -vv
+```
+
+2. Run one simulation (new terminal):
+
+```bash
+cd /home/goaguiar/master_veins/veins_qos/simulations/veins_inet
+./run -u Cmdenv -c highway_edca_v2x
+```
+
+3. Results are written to:
+
+- `veins_qos/simulations/veins_inet/results/`
+
+4. Open KPI dashboard:
+
+```bash
+cd /home/goaguiar/master_veins
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r kpi_dashboard/requirements.txt
+python kpi_dashboard/app.py
+```
+
+Then open `http://127.0.0.1:8050`.
