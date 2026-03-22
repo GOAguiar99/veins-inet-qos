@@ -1,55 +1,78 @@
-# Crash-Aware EDCA Traffic for Veins
+# Crash-Aware Vehicular QoS Workspace
 
-This repository contains a master's-project workspace focused on one question:
+This repository is a master's-project workspace for evaluating crash-aware QoS behavior in vehicular Wi-Fi simulations.
 
-Can crash-critical packets (VO) get better service than normal traffic (BE) in Veins/INET Wi-Fi simulations, and what is the BE penalty?
+The central research question is:
 
-The active project is `veins_qos/`.
+Can crash-critical traffic obtain better service than ordinary traffic under contention, and what is the performance cost imposed on ordinary traffic?
 
-## Repository Structure
+The active project is [`veins_qos/`](veins_qos/).
 
-- `veins_qos/`: active code, scenarios, and configs.
-- `kpi_dashboard/`: Dash app for KPI visualization from `.sca` files.
-- `uppaal/`: offline timed-automata model + queries for MAC-policy verification.
-- `inet/`, `veins/`, `omnetpp-6.1/`: framework/dependency trees.
+## Project Scope
 
-For AI/dev context details, see [`veins_qos/AI_CONTEXT.md`](veins_qos/AI_CONTEXT.md).
+- Ordinary periodic traffic is modeled as Best Effort (BE).
+- Crash traffic is modeled as Voice (VO) using DSCP `46`.
+- A custom classifier maps DSCP to Wi-Fi user priority in EDCA runs.
+- Experiments compare non-QoS DCF baseline behavior with EDCA and adaptive V2X variants.
+- Evaluation focuses on delay, reception/reach, and BE-vs-VO trade-off.
 
-## Current Experiment Matrix
+This workspace intentionally keeps a minimal two-class design (BE vs VO) to preserve thesis clarity and reproducibility.
 
-Active OMNeT++ configs (`veins_qos/simulations/veins_inet/omnetpp.ini`):
+## Repository Boundaries
 
-- square: `plain`, `edca_only`, `edca_v2x`
-- highway: `highway_plain`, `highway_edca_only`, `highway_edca_v2x`
+- [`veins_qos/`](veins_qos/): active codebase (primary target for development and experiments).
+- [`kpi_dashboard/`](kpi_dashboard/): KPI analysis dashboard for OMNeT++ outputs.
+- [`uppaal/`](uppaal/): offline formal verification models and queries.
+- `inet/`, `veins/`, `omnetpp-6.1/`: framework/dependency trees; treat as read-only unless framework-level changes are explicitly required.
+- [`ap_servers/`](ap_servers/): legacy material, not the active study baseline.
 
-## Quick Start
+## Active Simulation Packages
 
-1. Start Veins launch daemon:
+Simulation packages live under `veins_qos/simulations/`:
 
-```bash
-cd /home/goaguiar/master_veins/veins/bin
-./veins_launchd -vv
-```
+- [`veins_qos/simulations/veins_inet_square/`](veins_qos/simulations/veins_inet_square/)
+- [`veins_qos/simulations/veins_inet_highway/`](veins_qos/simulations/veins_inet_highway/)
+- [`veins_qos/simulations/veins_inet_light/`](veins_qos/simulations/veins_inet_light/)
 
-2. Run one simulation (new terminal):
+Current configuration profiles in each package `omnetpp.ini`:
 
-```bash
-cd /home/goaguiar/master_veins/veins_qos/simulations/veins_inet
-./run -u Cmdenv -c highway_edca_v2x
-```
+- `plain`
+- `edca_only`
+- `edca_v2x`
+- `edca_v2x_be_friendly`
+- `edca_v2x_vo_protect`
 
-3. Results are written to:
+## Core Implementation Areas (`veins_qos/src`)
 
-- `veins_qos/simulations/veins_inet/results/`
+- `traffic/`: application-layer traffic generators for BE and crash-triggered VO flows.
+- `qos/`: DSCP-to-user-priority classifier used by EDCA-enabled runs.
+- `mac/`: adaptive EDCA/V2X MAC logic and FSM behavior.
+- `veins_inet/`: integration layer between Veins mobility and INET networking stack.
 
-4. Open KPI dashboard:
+## KPI Focus
 
-```bash
-cd /home/goaguiar/master_veins
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r kpi_dashboard/requirements.txt
-python kpi_dashboard/app.py
-```
+Primary analysis dimensions:
 
-Then open `http://127.0.0.1:8050`.
+- BE/VO transmitted and received packet counts
+- BE/VO end-to-end delay (mean and distribution-sensitive views)
+- multicast reach (`RX per TX`)
+- MAC-level drops (including overflow/retry-limit categories)
+- protection-vs-cost trade-off (VO improvement vs BE degradation)
+
+## Documentation Index
+
+- Project context and guardrails: [`veins_qos/AI_CONTEXT.md`](veins_qos/AI_CONTEXT.md)
+- KPI dashboard details: [`kpi_dashboard/README.md`](kpi_dashboard/README.md)
+- Formal model workflow: [`uppaal/README.md`](uppaal/README.md)
+- Square scenario notes: [`veins_qos/simulations/veins_inet_square/README`](veins_qos/simulations/veins_inet_square/README)
+- Highway scenario notes: [`veins_qos/simulations/veins_inet_highway/README`](veins_qos/simulations/veins_inet_highway/README)
+- Light scenario notes: [`veins_qos/simulations/veins_inet_light/README`](veins_qos/simulations/veins_inet_light/README)
+- Repo-level agent instructions: [`AGENTS.md`](AGENTS.md)
+
+## Dependency/Framework Documentation
+
+Framework-specific documentation is maintained in their own trees:
+
+- INET: [`inet/README.md`](inet/README.md), [`inet/INSTALL.md`](inet/INSTALL.md)
+- Veins: [`veins/README.txt`](veins/README.txt)
+- OMNeT++: [`omnetpp-6.1/README`](omnetpp-6.1/README), [`omnetpp-6.1/INSTALL.md`](omnetpp-6.1/INSTALL.md)
