@@ -158,7 +158,10 @@ void V2xEdcaFsmController::onVoTransmissionEnd(bool hasPendingVo)
         cancelEvent(sendingGuardTimer);
 
     if (!hasPendingVo) {
-        enterListening();
+        if (blockingUntil > simTime())
+            enterBlocking(blockingUntil);
+        else
+            enterListening();
         return;
     }
 
