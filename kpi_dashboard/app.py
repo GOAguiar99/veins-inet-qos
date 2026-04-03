@@ -36,6 +36,8 @@ CONFIG_SUMMARY_COLUMNS = [
     "vo_tx_count",
     "vo_rx_count",
     "mac_drop_count",
+    "mac_drop_be_count",
+    "mac_drop_vo_count",
     "mac_drop_queue_overflow_count",
     "mac_drop_retry_limit_count",
     "mac_drop_per_tx",
@@ -56,6 +58,8 @@ COMPARISON_COLUMNS = [
     "vo_rx_per_tx_delta",
     "be_rx_per_tx_delta",
     "mac_drop_delta_count",
+    "mac_drop_be_delta_count",
+    "mac_drop_vo_delta_count",
     "mac_drop_per_tx_delta",
 ]
 
@@ -92,6 +96,8 @@ DISPLAY_LABELS = {
     "vo_tx_count": "VO TX",
     "vo_rx_count": "VO RX",
     "mac_drop_count": "MAC Packet Drop Count",
+    "mac_drop_be_count": "MAC BE Drop Count",
+    "mac_drop_vo_count": "MAC VO Drop Count",
     "mac_drop_queue_overflow_count": "MAC Drop Queue Overflow",
     "mac_drop_retry_limit_count": "MAC Drop Retry Limit",
     "mac_drop_per_tx": "MAC Drops per App TX",
@@ -107,6 +113,8 @@ DISPLAY_LABELS = {
     "vo_rx_per_tx_delta": "VO RX per TX Delta",
     "be_rx_per_tx_delta": "BE RX per TX Delta",
     "mac_drop_delta_count": "MAC Drop Delta (count)",
+    "mac_drop_be_delta_count": "MAC BE Drop Delta (count)",
+    "mac_drop_vo_delta_count": "MAC VO Drop Delta (count)",
     "mac_drop_per_tx_delta": "MAC Drops per App TX Delta",
 }
 
@@ -135,6 +143,8 @@ ROUND_COLUMNS = [
     "be_rx_per_tx_delta",
     "mac_drop_per_tx",
     "mac_drop_delta_count",
+    "mac_drop_be_delta_count",
+    "mac_drop_vo_delta_count",
     "mac_drop_per_tx_delta",
 ]
 
@@ -154,6 +164,8 @@ RUN_EXPORT_COLUMNS = [
     "vo_tx_count",
     "vo_rx_count",
     "mac_drop_count",
+    "mac_drop_be_count",
+    "mac_drop_vo_count",
     "mac_drop_per_tx",
 ]
 
@@ -206,6 +218,7 @@ def _build_feedback_snapshot(payload: dict | None, baseline_config: str | None) 
 def _default_results_dir() -> Path:
     simulations_dir = (Path(__file__).resolve().parent / ".." / "veins_qos" / "simulations").resolve()
     candidates = [
+        simulations_dir / "veins_inet_highway_light" / "results",
         simulations_dir / "veins_inet_highway" / "results",
         simulations_dir / "veins_inet_square" / "results",
         simulations_dir / "veins_inet_light" / "results",
@@ -220,6 +233,7 @@ def _default_results_dir() -> Path:
 def _scenario_options() -> list[tuple[str, Path]]:
     simulations_dir = (Path(__file__).resolve().parent / ".." / "veins_qos" / "simulations").resolve()
     return [
+        ("Highway Light", simulations_dir / "veins_inet_highway_light" / "results"),
         ("Highway", simulations_dir / "veins_inet_highway" / "results"),
         ("Square", simulations_dir / "veins_inet_square" / "results"),
         ("Light", simulations_dir / "veins_inet_light" / "results"),
@@ -229,6 +243,7 @@ def _scenario_options() -> list[tuple[str, Path]]:
 
 def _infer_simulation_label(results_dir: Path) -> str:
     mapping = {
+        "veins_inet_highway_light": "Highway Light",
         "veins_inet_highway": "Highway",
         "veins_inet_square": "Square",
         "veins_inet_light": "Light",
@@ -356,6 +371,8 @@ def _build_comparison_summary(config_summary: pd.DataFrame, baseline_config: str
         comparison_row["vo_rx_per_tx_delta"] = row["vo_rx_per_tx"] - base["vo_rx_per_tx"]
         comparison_row["be_rx_per_tx_delta"] = row["be_rx_per_tx"] - base["be_rx_per_tx"]
         comparison_row["mac_drop_delta_count"] = row["mac_drop_count"] - base["mac_drop_count"]
+        comparison_row["mac_drop_be_delta_count"] = row["mac_drop_be_count"] - base["mac_drop_be_count"]
+        comparison_row["mac_drop_vo_delta_count"] = row["mac_drop_vo_count"] - base["mac_drop_vo_count"]
         comparison_row["mac_drop_per_tx_delta"] = row["mac_drop_per_tx"] - base["mac_drop_per_tx"]
         rows.append(comparison_row)
 
@@ -525,6 +542,8 @@ def _plot_packet_loss(frame: pd.DataFrame, simulation_label: str):
         id_vars=id_vars,
         value_vars=[
             "mac_drop_count",
+            "mac_drop_be_count",
+            "mac_drop_vo_count",
             "mac_drop_queue_overflow_count",
             "mac_drop_retry_limit_count",
         ],
@@ -534,6 +553,8 @@ def _plot_packet_loss(frame: pd.DataFrame, simulation_label: str):
     melted["metric"] = melted["metric"].map(
         {
             "mac_drop_count": "MAC Drop Total",
+            "mac_drop_be_count": "MAC Drop BE (AC_BE)",
+            "mac_drop_vo_count": "MAC Drop VO (AC_VO)",
             "mac_drop_queue_overflow_count": "MAC Drop Queue Overflow",
             "mac_drop_retry_limit_count": "MAC Drop Retry Limit",
         }

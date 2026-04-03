@@ -8,6 +8,7 @@ This dashboard reads OMNeT++ scalar files (`.sca`) and delay vectors (`.vec`) an
 - `multicast reach` as receptions per transmission
 - `TX/RX counts` for BE and VO
 - MAC-level packet drops (`total`, `queue overflow`, `retry limit`)
+- MAC-level packet drops by packet type (`BE` via `AC_BE`, `VO` via `AC_VO`)
 - normalized MAC drops per application TX
 - baseline-aware KPI deltas across configs (`config - baseline`)
 - simulation-time network throughput trend
@@ -17,7 +18,7 @@ This dashboard reads OMNeT++ scalar files (`.sca`) and delay vectors (`.vec`) an
 It is designed for fast comparisons such as `plain` vs `edca_v2x` inside one scenario package, or legacy pairs such as `highway_plain` vs `highway_edca_v2x`.
 
 The dashboard is scenario-scoped:
-- you select one simulation package at a time (`Highway`, `Square`, `Light`, or legacy mixed)
+- you select one simulation package at a time (`Highway Light`, `Highway`, `Square`, `Light`, or legacy mixed)
 - the plots and table only show runs from that selected scenario's `results/` folder
 - it is not intended to mix or compare different simulation packages in one view
 
@@ -53,6 +54,7 @@ pip install -r kpi_dashboard/requirements.txt
 
 Default results directory:
 - auto-detects the first existing folder in this order:
+- `veins_qos/simulations/veins_inet_highway_light/results`
 - `veins_qos/simulations/veins_inet_highway/results`
 - `veins_qos/simulations/veins_inet_square/results`
 - `veins_qos/simulations/veins_inet_light/results`
@@ -80,6 +82,7 @@ python app.py --results /absolute/path/to/results
 Examples:
 
 ```bash
+python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_highway_light/results
 python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_highway/results
 python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_square/results
 python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_light/results
@@ -152,9 +155,13 @@ The lower-right area indicates stronger VO protection with BE penalty, which is 
 - `VO TX`: sum of `voTxPackets:count` over nodes (`app[1]`)
 - `VO RX`: sum of `voRxPackets:count` over nodes (`app[0]`)
 - `MAC drops (total)`: sum of `packetDrop:count` over `Scenario.node[*].wlan[*].mac`
+- `MAC drops (BE)`: sum of `droppedPacketsQueueOverflow:count` + `retryLimitReached:count` over `Scenario.node[*].wlan[*].mac.hcf.edca.edcaf[1]` (`AC_BE`)
+- `MAC drops (VO)`: sum of `droppedPacketsQueueOverflow:count` + `retryLimitReached:count` over `Scenario.node[*].wlan[*].mac.hcf.edca.edcaf[3]` (`AC_VO`)
 - `MAC drops (queue overflow)`: sum of `packetDropQueueOverflow:count` over `Scenario.node[*].wlan[*].mac`
 - `MAC drops (retry limit)`: sum of `packetDropRetryLimitReached:count` over `Scenario.node[*].wlan[*].mac`
 - `MAC drops per app TX`: `mac_drop_count / (BE_TX + VO_TX)`
+
+For runs without EDCA per-AC counters (for example plain DCF), BE/VO MAC drop split is reported as `NaN` because packet-type attribution is not available from MAC scalars.
 - `Network throughput over time`: total aggregated from `app[*].packetSent:vector(packetBytes)` binned per second
 - `BE throughput over time`: aggregated from `app[0].packetSent:vector(packetBytes)` binned per second
 - `VO throughput over time`: aggregated from `app[1].packetSent:vector(packetBytes)` binned per second

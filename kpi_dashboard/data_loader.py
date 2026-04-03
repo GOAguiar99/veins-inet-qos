@@ -15,6 +15,15 @@ APP1_RE = re.compile(r"^Scenario\.node\[\d+\]\.app\[1\]$")
 APP_MODULE_RE = re.compile(r"^Scenario\.node\[(\d+)\]\.app\[([01])\]$")
 FSM_CONTROLLER_RE = re.compile(r"^Scenario\.node\[(\d+)\]\.wlan\[\d+\]\.mac\.hcf\.FSMController$")
 MAC_RE = re.compile(r"^Scenario\.node\[\d+\]\.wlan\[\d+\]\.mac$")
+EDCAF_PENDING_QUEUE_RE = re.compile(
+    r"^Scenario\.node\[\d+\]\.wlan\[\d+\]\.mac\.hcf\.edca\.edcaf\[(\d+)\]\.pendingQueue$"
+)
+EDCAF_RECOVERY_RE = re.compile(
+    r"^Scenario\.node\[\d+\]\.wlan\[\d+\]\.mac\.hcf\.edca\.edcaf\[(\d+)\]\.recoveryProcedure$"
+)
+
+AC_INDEX_BE = 1
+AC_INDEX_VO = 3
 
 
 def _to_float(raw: str) -> float:
@@ -303,6 +312,12 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
     mac_drop_total = 0.0
     mac_drop_queue_overflow_total = 0.0
     mac_drop_retry_limit_total = 0.0
+    mac_drop_be_queue_overflow_total = 0.0
+    mac_drop_be_retry_limit_total = 0.0
+    mac_drop_vo_queue_overflow_total = 0.0
+    mac_drop_vo_retry_limit_total = 0.0
+    saw_be_ac_metrics = False
+    saw_vo_ac_metrics = False
 
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         for line in handle:
@@ -355,6 +370,27 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
                     mac_drop_queue_overflow_total += value
                 elif metric == "packetDropRetryLimitReached:count":
                     mac_drop_retry_limit_total += value
+            else:
+                pending_queue_match = EDCAF_PENDING_QUEUE_RE.match(module)
+                if pending_queue_match and metric == "droppedPacketsQueueOverflow:count":
+                    ac_index = int(pending_queue_match.group(1))
+                    if ac_index == AC_INDEX_BE:
+                        saw_be_ac_metrics = True
+                        mac_drop_be_queue_overflow_total += value
+                    elif ac_index == AC_INDEX_VO:
+                        saw_vo_ac_metrics = True
+                        mac_drop_vo_queue_overflow_total += value
+                    continue
+
+                recovery_match = EDCAF_RECOVERY_RE.match(module)
+                if recovery_match and metric == "retryLimitReached:count":
+                    ac_index = int(recovery_match.group(1))
+                    if ac_index == AC_INDEX_BE:
+                        saw_be_ac_metrics = True
+                        mac_drop_be_retry_limit_total += value
+                    elif ac_index == AC_INDEX_VO:
+                        saw_vo_ac_metrics = True
+                        mac_drop_vo_retry_limit_total += value
 
     for module, count in be_delay_count_by_module.items():
         mean = be_delay_mean_by_module.get(module, math.nan)
@@ -385,6 +421,10 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
     vo_delay_p99_s = vec_stats.get("vo_delay_p99_s", math.nan)
     vo_jitter_s = vec_stats.get("vo_jitter_s", math.nan)
 
+    mac_drop_be_total = mac_drop_be_queue_overflow_total + mac_drop_be_retry_limit_total
+    mac_drop_vo_total = mac_drop_vo_queue_overflow_total + mac_drop_vo_retry_limit_total
+    mac_drop_be_count = int(round(mac_drop_be_total)) if saw_be_ac_metrics else math.nan
+    mac_drop_vo_count = int(round(mac_drop_vo_total)) if saw_vo_ac_metrics else math.nan
     app_tx_total = be_tx_total + vo_tx_total
 
     return {
@@ -430,6 +470,8 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
         "mac_drop_count": int(round(mac_drop_total)),
         "mac_drop_queue_overflow_count": int(round(mac_drop_queue_overflow_total)),
         "mac_drop_retry_limit_count": int(round(mac_drop_retry_limit_total)),
+        "mac_drop_be_count": mac_drop_be_count,
+        "mac_drop_vo_count": mac_drop_vo_count,
         "mac_drop_per_tx": (mac_drop_total / app_tx_total) if app_tx_total > 0 else math.nan,
     }
 
