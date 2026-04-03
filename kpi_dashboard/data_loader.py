@@ -16,7 +16,7 @@ APP_MODULE_RE = re.compile(r"^Scenario\.node\[(\d+)\]\.app\[([01])\]$")
 FSM_CONTROLLER_RE = re.compile(r"^Scenario\.node\[(\d+)\]\.wlan\[\d+\]\.mac\.hcf\.FSMController$")
 MAC_RE = re.compile(r"^Scenario\.node\[\d+\]\.wlan\[\d+\]\.mac$")
 MAC_AC_DROP_SCALAR_RE = re.compile(
-    r"^packetDropAc(Bk|Be|Vi|Vo|Unclassified)(?:Reason([A-Za-z0-9]+))?Count$"
+    r"^packetDropAc(Be|Vo|Unclassified)(?:Reason([A-Za-z0-9]+))?Count$"
 )
 EDCAF_PENDING_QUEUE_RE = re.compile(
     r"^Scenario\.node\[\d+\]\.wlan\[\d+\]\.mac\.hcf\.edca\.edcaf\[(\d+)\]\.pendingQueue$"
@@ -146,9 +146,7 @@ def parse_vec_file(path: Path) -> Dict[str, float]:
         jitter_count = jitter_count_by_metric[metric_name]
         jitter_s = (jitter_sum_by_metric[metric_name] / jitter_count) if jitter_count > 0 else math.nan
 
-        result[f"{metric_name}_delay_p50_s"] = _percentile(metric_values, 0.50)
         result[f"{metric_name}_delay_p95_s"] = _percentile(metric_values, 0.95)
-        result[f"{metric_name}_delay_p99_s"] = _percentile(metric_values, 0.99)
         result[f"{metric_name}_jitter_s"] = jitter_s
 
     return result
@@ -319,14 +317,10 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
     mac_drop_be_retry_limit_total = 0.0
     mac_drop_vo_queue_overflow_total = 0.0
     mac_drop_vo_retry_limit_total = 0.0
-    mac_drop_bk_total = 0.0
     mac_drop_be_total_from_mac = 0.0
-    mac_drop_vi_total = 0.0
     mac_drop_vo_total_from_mac = 0.0
     mac_drop_unclassified_total = 0.0
-    saw_bk_ac_metrics = False
     saw_be_ac_metrics_from_mac = False
-    saw_vi_ac_metrics = False
     saw_vo_ac_metrics_from_mac = False
     saw_unclassified_ac_metrics = False
     saw_be_ac_metrics = False
@@ -389,15 +383,9 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
                         ac_name, reason_name = mac_ac_drop_match.groups()
                         # Only top-level per-AC totals are used for dashboard attribution.
                         if reason_name is None:
-                            if ac_name == "Bk":
-                                saw_bk_ac_metrics = True
-                                mac_drop_bk_total += value
-                            elif ac_name == "Be":
+                            if ac_name == "Be":
                                 saw_be_ac_metrics_from_mac = True
                                 mac_drop_be_total_from_mac += value
-                            elif ac_name == "Vi":
-                                saw_vi_ac_metrics = True
-                                mac_drop_vi_total += value
                             elif ac_name == "Vo":
                                 saw_vo_ac_metrics_from_mac = True
                                 mac_drop_vo_total_from_mac += value
@@ -446,13 +434,9 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
     vo_delay_max_s = _safe_max(vo_delay_max_values)
 
     vec_stats = parse_vec_file(path.with_suffix(".vec"))
-    be_delay_p50_s = vec_stats.get("be_delay_p50_s", math.nan)
     be_delay_p95_s = vec_stats.get("be_delay_p95_s", math.nan)
-    be_delay_p99_s = vec_stats.get("be_delay_p99_s", math.nan)
     be_jitter_s = vec_stats.get("be_jitter_s", math.nan)
-    vo_delay_p50_s = vec_stats.get("vo_delay_p50_s", math.nan)
     vo_delay_p95_s = vec_stats.get("vo_delay_p95_s", math.nan)
-    vo_delay_p99_s = vec_stats.get("vo_delay_p99_s", math.nan)
     vo_jitter_s = vec_stats.get("vo_jitter_s", math.nan)
 
     mac_drop_be_total_fallback = mac_drop_be_queue_overflow_total + mac_drop_be_retry_limit_total
@@ -472,42 +456,34 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
     else:
         mac_drop_vo_count = math.nan
 
-    mac_drop_bk_count = int(round(mac_drop_bk_total)) if saw_bk_ac_metrics else math.nan
-    mac_drop_vi_count = int(round(mac_drop_vi_total)) if saw_vi_ac_metrics else math.nan
-    mac_drop_unclassified_count = int(round(mac_drop_unclassified_total)) if saw_unclassified_ac_metrics else math.nan
+    if saw_unclassified_ac_metrics:
+        mac_drop_unclassified_count = int(round(mac_drop_unclassified_total))
+        if mac_drop_total > 0 and mac_drop_unclassified_count > 0:
+            ratio = mac_drop_unclassified_count / mac_drop_total
+            # Some MAC instrumentation reports per-AC totals at roughly 2x packetDrop:count.
+            if 1.9 <= ratio <= 2.1:
+                mac_drop_unclassified_count = int(round(mac_drop_unclassified_count / 2.0))
+    else:
+        no_be_attribution = math.isnan(mac_drop_be_count) or mac_drop_be_count == 0
+        no_vo_attribution = math.isnan(mac_drop_vo_count) or mac_drop_vo_count == 0
+        # In plain DCF runs, total MAC drops can be present without BE/VO AC attribution.
+        mac_drop_unclassified_count = int(round(mac_drop_total)) if mac_drop_total > 0 and no_be_attribution and no_vo_attribution else 0
+
     app_tx_total = be_tx_total + vo_tx_total
 
     return {
         "config": configname,
         "run": run_name,
         "source_file": path.name,
-        "be_delay_s": be_delay_s,
-        "be_delay_min_s": be_delay_min_s,
-        "be_delay_max_s": be_delay_max_s,
-        "be_delay_p50_s": be_delay_p50_s,
-        "be_delay_p95_s": be_delay_p95_s,
-        "be_delay_p99_s": be_delay_p99_s,
-        "be_jitter_s": be_jitter_s,
-        "vo_delay_s": vo_delay_s,
-        "vo_delay_min_s": vo_delay_min_s,
-        "vo_delay_max_s": vo_delay_max_s,
-        "vo_delay_p50_s": vo_delay_p50_s,
-        "vo_delay_p95_s": vo_delay_p95_s,
-        "vo_delay_p99_s": vo_delay_p99_s,
-        "vo_jitter_s": vo_jitter_s,
         "be_delay_ms": be_delay_s * 1000.0 if not math.isnan(be_delay_s) else math.nan,
         "be_delay_min_ms": be_delay_min_s * 1000.0 if not math.isnan(be_delay_min_s) else math.nan,
         "be_delay_max_ms": be_delay_max_s * 1000.0 if not math.isnan(be_delay_max_s) else math.nan,
-        "be_delay_p50_ms": be_delay_p50_s * 1000.0 if not math.isnan(be_delay_p50_s) else math.nan,
         "be_delay_p95_ms": be_delay_p95_s * 1000.0 if not math.isnan(be_delay_p95_s) else math.nan,
-        "be_delay_p99_ms": be_delay_p99_s * 1000.0 if not math.isnan(be_delay_p99_s) else math.nan,
         "be_jitter_ms": be_jitter_s * 1000.0 if not math.isnan(be_jitter_s) else math.nan,
         "vo_delay_ms": vo_delay_s * 1000.0 if not math.isnan(vo_delay_s) else math.nan,
         "vo_delay_min_ms": vo_delay_min_s * 1000.0 if not math.isnan(vo_delay_min_s) else math.nan,
         "vo_delay_max_ms": vo_delay_max_s * 1000.0 if not math.isnan(vo_delay_max_s) else math.nan,
-        "vo_delay_p50_ms": vo_delay_p50_s * 1000.0 if not math.isnan(vo_delay_p50_s) else math.nan,
         "vo_delay_p95_ms": vo_delay_p95_s * 1000.0 if not math.isnan(vo_delay_p95_s) else math.nan,
-        "vo_delay_p99_ms": vo_delay_p99_s * 1000.0 if not math.isnan(vo_delay_p99_s) else math.nan,
         "vo_jitter_ms": vo_jitter_s * 1000.0 if not math.isnan(vo_jitter_s) else math.nan,
         "be_tx_count": int(round(be_tx_total)),
         "be_rx_count": int(round(be_rx_total)),
@@ -515,23 +491,12 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
         "vo_rx_count": int(round(vo_rx_total)),
         "be_rx_per_tx": (be_rx_total / be_tx_total) if be_tx_total > 0 else math.nan,
         "vo_rx_per_tx": (vo_rx_total / vo_tx_total) if vo_tx_total > 0 else math.nan,
-        "be_delivery_ratio": (be_rx_total / be_tx_total) if be_tx_total > 0 else math.nan,
-        "vo_delivery_ratio": (vo_rx_total / vo_tx_total) if vo_tx_total > 0 else math.nan,
-        "mac_drop_count": int(round(mac_drop_total)),
+        "mac_drop_sum_count": int(round(mac_drop_total)),
         "mac_drop_queue_overflow_count": int(round(mac_drop_queue_overflow_total)),
         "mac_drop_retry_limit_count": int(round(mac_drop_retry_limit_total)),
-        "mac_drop_bk_count": mac_drop_bk_count,
         "mac_drop_be_count": mac_drop_be_count,
-        "mac_drop_vi_count": mac_drop_vi_count,
         "mac_drop_vo_count": mac_drop_vo_count,
         "mac_drop_unclassified_count": mac_drop_unclassified_count,
-        "mac_drop_ac_sum_count": (
-            (0 if math.isnan(mac_drop_bk_count) else mac_drop_bk_count)
-            + (0 if math.isnan(mac_drop_be_count) else mac_drop_be_count)
-            + (0 if math.isnan(mac_drop_vi_count) else mac_drop_vi_count)
-            + (0 if math.isnan(mac_drop_vo_count) else mac_drop_vo_count)
-            + (0 if math.isnan(mac_drop_unclassified_count) else mac_drop_unclassified_count)
-        ),
         "mac_drop_vo_per_vo_tx": (mac_drop_vo_count / vo_tx_total) if vo_tx_total > 0 and not math.isnan(mac_drop_vo_count) else math.nan,
         "mac_drop_be_per_be_tx": (mac_drop_be_count / be_tx_total) if be_tx_total > 0 and not math.isnan(mac_drop_be_count) else math.nan,
         "mac_drop_per_tx": (mac_drop_total / app_tx_total) if app_tx_total > 0 else math.nan,

@@ -9,7 +9,8 @@ This dashboard reads OMNeT++ scalar files (`.sca`) and delay vectors (`.vec`) an
 - `TX/RX counts` for BE and VO
 - MAC-level packet drops (`total`, `queue overflow`, `retry limit`)
 - MAC-level packet drops by packet type (`BE` via `AC_BE`, `VO` via `AC_VO`)
-- normalized MAC drops per application TX
+- unclassified MAC drops (useful for plain DCF runs without AC attribution)
+- normalized MAC drops per application TX (overall + BE + VO)
 - baseline-aware KPI deltas across configs (`config - baseline`)
 - simulation-time network throughput trend
 - simulation-time node activity trend (`active TX nodes`)
@@ -102,7 +103,8 @@ python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_
    - jitter chart
    - multicast reach chart (`RX per TX`)
    - BE/VO TX-RX count chart
-   - packet loss / drop chart
+   - MAC drop breakdown chart (`total`, `BE`, `VO`, `queue overflow`, `retry limit`)
+   - normalized drop-rate chart (`overall`, `BE per BE_TX`, `VO per VO_TX`)
    - simulation timeline chart (throughput + active TX nodes over time)
    - protection-vs-cost scatter (`BE P95 delay` vs `VO P95 delay`, marker size = `VO RX per TX`)
    - comparison-vs-baseline table (absolute + percent deltas)
@@ -157,15 +159,19 @@ The lower-right area indicates stronger VO protection with BE penalty, which is 
 - `VO TX`: sum of `voTxPackets:count` over nodes (`app[1]`)
 - `VO RX`: sum of `voRxPackets:count` over nodes (`app[0]`)
 - `MAC drops (total)`: sum of `packetDrop:count` over `Scenario.node[*].wlan[*].mac`
+- `MAC sum of all drops`: alias of `MAC drops (total)` for explicit JSON export
 - `MAC drops (BE)`: sum of `droppedPacketsQueueOverflow:count` + `retryLimitReached:count` over `Scenario.node[*].wlan[*].mac.hcf.edca.edcaf[1]` (`AC_BE`)
 - `MAC drops (VO)`: sum of `droppedPacketsQueueOverflow:count` + `retryLimitReached:count` over `Scenario.node[*].wlan[*].mac.hcf.edca.edcaf[3]` (`AC_VO`)
+- `MAC drops (unclassified)`: `packetDropAcUnclassifiedCount` when available; otherwise falls back to total MAC drops when BE/VO attribution is absent (typical in plain DCF)
 - `MAC drops (queue overflow)`: sum of `packetDropQueueOverflow:count` over `Scenario.node[*].wlan[*].mac`
 - `MAC drops (retry limit)`: sum of `packetDropRetryLimitReached:count` over `Scenario.node[*].wlan[*].mac`
-- `MAC drops per app TX`: `mac_drop_count / (BE_TX + VO_TX)`
+- `MAC drops per app TX`: `mac_drop_sum_count / (BE_TX + VO_TX)`
+- `MAC BE drops per BE TX`: `mac_drop_be_count / BE_TX`
+- `MAC VO drops per VO TX`: `mac_drop_vo_count / VO_TX`
 
 For legacy runs without per-AC attribution scalars, the dashboard falls back to EDCAF queue-overflow/retry counters (or `NaN` when unavailable, for example plain DCF).
-- If `V2xIeee80211Mac` instrumentation is enabled, BE/VO/BK/VI/unclassified totals are read from
-  top-level MAC scalars such as `packetDropAcBeCount` and `packetDropAcVoCount`, covering all MAC drop reasons observed in the MAC subtree.
+- If `V2xIeee80211Mac` instrumentation is enabled, BE/VO totals are read from
+  top-level MAC scalars such as `packetDropAcBeCount` and `packetDropAcVoCount`.
 - `Network throughput over time`: total aggregated from `app[*].packetSent:vector(packetBytes)` binned per second
 - `BE throughput over time`: aggregated from `app[0].packetSent:vector(packetBytes)` binned per second
 - `VO throughput over time`: aggregated from `app[1].packetSent:vector(packetBytes)` binned per second
@@ -178,7 +184,7 @@ For multicast runs, the dashboard uses `RX per TX` instead of calling this a del
 
 This is more honest for the current experiment because one transmission may be received by multiple vehicles.
 
-The packet-drop chart and the `MAC drops per app TX` columns help check whether changes in delay/reach are coupled with stronger MAC-level losses.
+The drop breakdown and normalized drop-rate charts help check whether changes in delay/reach are coupled with stronger MAC-level losses.
 
 The dashboard shows timeline data in two separate plots:
 - a throughput timeline split into Total, BE, and VO subplots

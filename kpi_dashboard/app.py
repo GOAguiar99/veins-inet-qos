@@ -35,17 +35,36 @@ CONFIG_SUMMARY_COLUMNS = [
     "vo_rx_per_tx",
     "vo_tx_count",
     "vo_rx_count",
-    "mac_drop_count",
-    "mac_drop_ac_sum_count",
-    "mac_drop_bk_count",
+    "mac_drop_sum_count",
     "mac_drop_be_count",
-    "mac_drop_vi_count",
     "mac_drop_vo_count",
     "mac_drop_unclassified_count",
     "mac_drop_queue_overflow_count",
     "mac_drop_retry_limit_count",
     "mac_drop_be_per_be_tx",
     "mac_drop_vo_per_vo_tx",
+    "mac_drop_per_tx",
+]
+
+CONFIG_SUMMARY_TABLE_COLUMNS = [
+    "config",
+    "runs",
+    "be_delay_ms",
+    "be_delay_p95_ms",
+    "be_jitter_ms",
+    "be_rx_per_tx",
+    "be_tx_count",
+    "be_rx_count",
+    "vo_delay_ms",
+    "vo_delay_p95_ms",
+    "vo_jitter_ms",
+    "vo_rx_per_tx",
+    "vo_tx_count",
+    "vo_rx_count",
+    "mac_drop_sum_count",
+    "mac_drop_be_count",
+    "mac_drop_vo_count",
+    "mac_drop_unclassified_count",
     "mac_drop_per_tx",
 ]
 
@@ -102,11 +121,8 @@ DISPLAY_LABELS = {
     "vo_rx_per_tx": "VO RX per TX",
     "vo_tx_count": "VO TX",
     "vo_rx_count": "VO RX",
-    "mac_drop_count": "MAC Packet Drop Count",
-    "mac_drop_ac_sum_count": "MAC AC Sum Drop Count",
-    "mac_drop_bk_count": "MAC BK Drop Count",
+    "mac_drop_sum_count": "MAC Sum of All Drops",
     "mac_drop_be_count": "MAC BE Drop Count",
-    "mac_drop_vi_count": "MAC VI Drop Count",
     "mac_drop_vo_count": "MAC VO Drop Count",
     "mac_drop_unclassified_count": "MAC Unclassified Drop Count",
     "mac_drop_queue_overflow_count": "MAC Drop Queue Overflow",
@@ -180,13 +196,12 @@ RUN_EXPORT_COLUMNS = [
     "vo_rx_per_tx",
     "vo_tx_count",
     "vo_rx_count",
-    "mac_drop_count",
-    "mac_drop_ac_sum_count",
-    "mac_drop_bk_count",
+    "mac_drop_sum_count",
     "mac_drop_be_count",
-    "mac_drop_vi_count",
     "mac_drop_vo_count",
     "mac_drop_unclassified_count",
+    "mac_drop_queue_overflow_count",
+    "mac_drop_retry_limit_count",
     "mac_drop_be_per_be_tx",
     "mac_drop_vo_per_vo_tx",
     "mac_drop_per_tx",
@@ -205,6 +220,7 @@ def _build_feedback_snapshot(payload: dict | None, baseline_config: str | None) 
         return {}
 
     rows = payload.get("rows", [])
+    timeline_rows = payload.get("timeline_rows", [])
     simulation_label = payload.get("simulation_label", "Custom")
     if not rows:
         return {
@@ -214,15 +230,27 @@ def _build_feedback_snapshot(payload: dict | None, baseline_config: str | None) 
         }
 
     frame = pd.DataFrame(rows)
+    timeline_frame = pd.DataFrame(timeline_rows) if timeline_rows else pd.DataFrame()
     config_summary = _build_config_summary(frame)
     comparison_summary, baseline_used = _build_comparison_summary(config_summary, baseline_config)
     config_list = _ordered_configs(frame["config"].astype(str).unique().tolist())
-    run_columns = [column for column in RUN_EXPORT_COLUMNS if column in frame.columns]
+    run_columns = [column for column in ("config", "run", "source_file") if column in frame.columns]
+    run_columns += [column for column in frame.columns if column not in set(run_columns)]
     if run_columns:
         sort_by = [column for column in ("config", "run") if column in run_columns] or [run_columns[0]]
         run_level = _display_frame(frame, run_columns).sort_values(sort_by).reset_index(drop=True)
     else:
         run_level = pd.DataFrame()
+
+    if not timeline_frame.empty:
+        timeline_columns = [column for column in ("config", "run", "source_file", "time_s") if column in timeline_frame.columns]
+        timeline_columns += [column for column in timeline_frame.columns if column not in set(timeline_columns)]
+        timeline_level = _display_frame(timeline_frame, timeline_columns).sort_values(
+            [column for column in ("config", "run", "time_s") if column in timeline_frame.columns]
+        ).reset_index(drop=True)
+    else:
+        timeline_columns = []
+        timeline_level = pd.DataFrame()
 
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -232,9 +260,14 @@ def _build_feedback_snapshot(payload: dict | None, baseline_config: str | None) 
         "run_count": int(len(frame)),
         "config_count": int(frame["config"].nunique()),
         "configs": config_list,
+        "run_level_columns": run_columns,
         "run_level_metrics": _records_for_json(run_level),
+        "config_summary_columns": CONFIG_SUMMARY_COLUMNS,
         "config_summary": _records_for_json(_display_frame(config_summary, CONFIG_SUMMARY_COLUMNS)),
+        "comparison_columns": COMPARISON_COLUMNS,
         "comparison_vs_baseline": _records_for_json(_display_frame(comparison_summary, COMPARISON_COLUMNS)),
+        "timeline_columns": timeline_columns,
+        "timeline_metrics": _records_for_json(timeline_level),
     }
 
 
@@ -396,7 +429,7 @@ def _build_comparison_summary(config_summary: pd.DataFrame, baseline_config: str
         comparison_row["be_jitter_delta_ms"] = row["be_jitter_ms"] - base["be_jitter_ms"]
         comparison_row["vo_rx_per_tx_delta"] = row["vo_rx_per_tx"] - base["vo_rx_per_tx"]
         comparison_row["be_rx_per_tx_delta"] = row["be_rx_per_tx"] - base["be_rx_per_tx"]
-        comparison_row["mac_drop_delta_count"] = row["mac_drop_count"] - base["mac_drop_count"]
+        comparison_row["mac_drop_delta_count"] = row["mac_drop_sum_count"] - base["mac_drop_sum_count"]
         comparison_row["mac_drop_be_delta_count"] = row["mac_drop_be_count"] - base["mac_drop_be_count"]
         comparison_row["mac_drop_vo_delta_count"] = row["mac_drop_vo_count"] - base["mac_drop_vo_count"]
         comparison_row["mac_drop_unclassified_delta_count"] = row["mac_drop_unclassified_count"] - base["mac_drop_unclassified_count"]
@@ -562,15 +595,12 @@ def _plot_delta_tradeoff(comparison_summary: pd.DataFrame, simulation_label: str
     return fig
 
 
-def _plot_packet_loss(frame: pd.DataFrame, simulation_label: str):
+def _plot_drop_reasons(frame: pd.DataFrame, simulation_label: str):
     id_vars = [column for column in ("config", "run") if column in frame.columns]
     hover_data = ["run"] if "run" in frame.columns else None
     candidate_columns = [
-        "mac_drop_count",
-        "mac_drop_ac_sum_count",
-        "mac_drop_bk_count",
+        "mac_drop_sum_count",
         "mac_drop_be_count",
-        "mac_drop_vi_count",
         "mac_drop_vo_count",
         "mac_drop_unclassified_count",
         "mac_drop_queue_overflow_count",
@@ -578,7 +608,7 @@ def _plot_packet_loss(frame: pd.DataFrame, simulation_label: str):
     ]
     available_columns = [column for column in candidate_columns if column in frame.columns]
     if not available_columns:
-        return px.scatter(title=f"Packet Loss / Drops ({simulation_label})")
+        return px.scatter(title=f"MAC Drop Breakdown ({simulation_label})")
 
     melted = frame.melt(
         id_vars=id_vars,
@@ -588,11 +618,8 @@ def _plot_packet_loss(frame: pd.DataFrame, simulation_label: str):
     )
     melted["metric"] = melted["metric"].map(
         {
-            "mac_drop_count": "MAC Drop Total",
-            "mac_drop_ac_sum_count": "MAC Drop AC Sum",
-            "mac_drop_bk_count": "MAC Drop BK (AC_BK)",
+            "mac_drop_sum_count": "MAC Drop Total",
             "mac_drop_be_count": "MAC Drop BE (AC_BE)",
-            "mac_drop_vi_count": "MAC Drop VI (AC_VI)",
             "mac_drop_vo_count": "MAC Drop VO (AC_VO)",
             "mac_drop_unclassified_count": "MAC Drop Unclassified",
             "mac_drop_queue_overflow_count": "MAC Drop Queue Overflow",
@@ -606,9 +633,48 @@ def _plot_packet_loss(frame: pd.DataFrame, simulation_label: str):
         color="metric",
         barmode="group",
         hover_data=hover_data,
-        title=f"Packet Loss / Drops ({simulation_label})",
+        title=f"MAC Drop Breakdown ({simulation_label})",
     )
     fig.update_layout(yaxis_title="Drop Count", xaxis_title="Config")
+    return fig
+
+
+def _plot_drop_rates(frame: pd.DataFrame, simulation_label: str):
+    id_vars = [column for column in ("config", "run") if column in frame.columns]
+    hover_data = ["run"] if "run" in frame.columns else None
+    candidate_columns = [
+        "mac_drop_per_tx",
+        "mac_drop_be_per_be_tx",
+        "mac_drop_vo_per_vo_tx",
+    ]
+    available_columns = [column for column in candidate_columns if column in frame.columns]
+    if not available_columns:
+        return px.scatter(title=f"MAC Drop Rates ({simulation_label})")
+
+    melted = frame.melt(
+        id_vars=id_vars,
+        value_vars=available_columns,
+        var_name="metric",
+        value_name="drop_rate",
+    )
+    melted["metric"] = melted["metric"].map(
+        {
+            "mac_drop_per_tx": "Overall Drops per App TX",
+            "mac_drop_be_per_be_tx": "BE Drops per BE TX",
+            "mac_drop_vo_per_vo_tx": "VO Drops per VO TX",
+        }
+    )
+
+    fig = px.line(
+        melted,
+        x="config",
+        y="drop_rate",
+        color="metric",
+        markers=True,
+        hover_data=hover_data,
+        title=f"Normalized Drop Rates ({simulation_label})",
+    )
+    fig.update_layout(yaxis_title="Drops per TX", xaxis_title="Config")
     return fig
 
 
@@ -819,12 +885,21 @@ def build_app(results_dir: Path) -> Dash:
             dcc.Graph(id="throughput-timeline-plot"),
             html.H3("State Timeline"),
             dcc.Graph(id="simulation-timeline-plot"),
+            html.H3("Latency Profile"),
             dcc.Graph(id="latency-profile-plot"),
+            html.H3("Jitter"),
             dcc.Graph(id="jitter-plot"),
+            html.H3("Multicast Reach"),
             dcc.Graph(id="reception-plot"),
+            html.H3("TX / RX Counts"),
             dcc.Graph(id="counts-plot"),
-            dcc.Graph(id="loss-plot"),
+            html.H3("MAC Drop Breakdown"),
+            dcc.Graph(id="drop-reasons-plot"),
+            html.H3("Normalized Drop Rates"),
+            dcc.Graph(id="drop-rates-plot"),
+            html.H3("Protection vs Cost"),
             dcc.Graph(id="tradeoff-plot"),
+            html.H3("Delta Protection vs Cost"),
             dcc.Graph(id="delta-tradeoff-plot"),
         ],
         style={"maxWidth": "1400px", "margin": "0 auto", "padding": "20px"},
@@ -888,7 +963,8 @@ def build_app(results_dir: Path) -> Dash:
         Output("jitter-plot", "figure"),
         Output("reception-plot", "figure"),
         Output("counts-plot", "figure"),
-        Output("loss-plot", "figure"),
+        Output("drop-reasons-plot", "figure"),
+        Output("drop-rates-plot", "figure"),
         Output("tradeoff-plot", "figure"),
         Output("delta-tradeoff-plot", "figure"),
         Input("results-store", "data"),
@@ -911,6 +987,7 @@ def build_app(results_dir: Path) -> Dash:
                 empty,
                 empty,
                 empty,
+                empty,
             )
 
         rows = payload.get("rows", [])
@@ -922,6 +999,7 @@ def build_app(results_dir: Path) -> Dash:
                 [],
                 [],
                 [],
+                empty,
                 empty,
                 empty,
                 empty,
@@ -954,12 +1032,12 @@ def build_app(results_dir: Path) -> Dash:
         )
         config_summary = _build_config_summary(frame)
         comparison_summary, baseline_used = _build_comparison_summary(config_summary, baseline_config)
-        config_display = _display_frame(config_summary, CONFIG_SUMMARY_COLUMNS)
+        config_display = _display_frame(config_summary, CONFIG_SUMMARY_TABLE_COLUMNS)
         comparison_display = _display_frame(comparison_summary, COMPARISON_COLUMNS)
 
         return (
             config_display.to_dict("records"),
-            _table_columns(CONFIG_SUMMARY_COLUMNS),
+            _table_columns(CONFIG_SUMMARY_TABLE_COLUMNS),
             comparison_display.to_dict("records"),
             _table_columns(COMPARISON_COLUMNS),
             _plot_throughput_timeline(timeline_frame, simulation_label),
@@ -968,7 +1046,8 @@ def build_app(results_dir: Path) -> Dash:
             _plot_jitter(config_summary, simulation_label),
             _plot_reception_efficiency(config_summary, simulation_label),
             _plot_counts(config_summary, simulation_label),
-            _plot_packet_loss(config_summary, simulation_label),
+            _plot_drop_reasons(config_summary, simulation_label),
+            _plot_drop_rates(config_summary, simulation_label),
             _plot_tradeoff(frame, simulation_label),
             _plot_delta_tradeoff(comparison_summary, simulation_label, baseline_used),
         )
