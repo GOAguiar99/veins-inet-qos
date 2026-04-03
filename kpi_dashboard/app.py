@@ -218,6 +218,7 @@ def _build_feedback_snapshot(payload: dict | None, baseline_config: str | None) 
 def _default_results_dir() -> Path:
     simulations_dir = (Path(__file__).resolve().parent / ".." / "veins_qos" / "simulations").resolve()
     candidates = [
+        simulations_dir / "veins_inet_highway_heavy" / "results",
         simulations_dir / "veins_inet_highway_light" / "results",
         simulations_dir / "veins_inet_highway" / "results",
         simulations_dir / "veins_inet_square" / "results",
@@ -233,6 +234,7 @@ def _default_results_dir() -> Path:
 def _scenario_options() -> list[tuple[str, Path]]:
     simulations_dir = (Path(__file__).resolve().parent / ".." / "veins_qos" / "simulations").resolve()
     return [
+        ("Highway Heavy", simulations_dir / "veins_inet_highway_heavy" / "results"),
         ("Highway Light", simulations_dir / "veins_inet_highway_light" / "results"),
         ("Highway", simulations_dir / "veins_inet_highway" / "results"),
         ("Square", simulations_dir / "veins_inet_square" / "results"),
@@ -243,6 +245,7 @@ def _scenario_options() -> list[tuple[str, Path]]:
 
 def _infer_simulation_label(results_dir: Path) -> str:
     mapping = {
+        "veins_inet_highway_heavy": "Highway Heavy",
         "veins_inet_highway_light": "Highway Light",
         "veins_inet_highway": "Highway",
         "veins_inet_square": "Square",

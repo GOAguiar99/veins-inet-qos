@@ -18,7 +18,7 @@ This dashboard reads OMNeT++ scalar files (`.sca`) and delay vectors (`.vec`) an
 It is designed for fast comparisons such as `plain` vs `edca_v2x` inside one scenario package, or legacy pairs such as `highway_plain` vs `highway_edca_v2x`.
 
 The dashboard is scenario-scoped:
-- you select one simulation package at a time (`Highway Light`, `Highway`, `Square`, `Light`, or legacy mixed)
+- you select one simulation package at a time (`Highway Heavy`, `Highway Light`, `Highway`, `Square`, `Light`, or legacy mixed)
 - the plots and table only show runs from that selected scenario's `results/` folder
 - it is not intended to mix or compare different simulation packages in one view
 
@@ -54,6 +54,7 @@ pip install -r kpi_dashboard/requirements.txt
 
 Default results directory:
 - auto-detects the first existing folder in this order:
+- `veins_qos/simulations/veins_inet_highway_heavy/results`
 - `veins_qos/simulations/veins_inet_highway_light/results`
 - `veins_qos/simulations/veins_inet_highway/results`
 - `veins_qos/simulations/veins_inet_square/results`
@@ -82,6 +83,7 @@ python app.py --results /absolute/path/to/results
 Examples:
 
 ```bash
+python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_highway_heavy/results
 python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_highway_light/results
 python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_highway/results
 python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_square/results
