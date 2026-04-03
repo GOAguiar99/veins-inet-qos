@@ -525,6 +525,15 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
         "mac_drop_vi_count": mac_drop_vi_count,
         "mac_drop_vo_count": mac_drop_vo_count,
         "mac_drop_unclassified_count": mac_drop_unclassified_count,
+        "mac_drop_ac_sum_count": (
+            (0 if math.isnan(mac_drop_bk_count) else mac_drop_bk_count)
+            + (0 if math.isnan(mac_drop_be_count) else mac_drop_be_count)
+            + (0 if math.isnan(mac_drop_vi_count) else mac_drop_vi_count)
+            + (0 if math.isnan(mac_drop_vo_count) else mac_drop_vo_count)
+            + (0 if math.isnan(mac_drop_unclassified_count) else mac_drop_unclassified_count)
+        ),
+        "mac_drop_vo_per_vo_tx": (mac_drop_vo_count / vo_tx_total) if vo_tx_total > 0 and not math.isnan(mac_drop_vo_count) else math.nan,
+        "mac_drop_be_per_be_tx": (mac_drop_be_count / be_tx_total) if be_tx_total > 0 and not math.isnan(mac_drop_be_count) else math.nan,
         "mac_drop_per_tx": (mac_drop_total / app_tx_total) if app_tx_total > 0 else math.nan,
     }
 

@@ -1,0 +1,31 @@
+It went better because vo_guarded is giving VO priority without forcing the MAC into unstable BE suppression cycles.
+
+Why edca_v2x_vo_guarded is better
+
+VO got strictly better vs plain:
+vo_delay_ms: 0.171947 -> 0.170036 (better)
+vo_delay_p95_ms: 0.169020 -> 0.169000 (better)
+vo_jitter_ms: 0.006212 -> 0.003170 (much better)
+vo_rx_per_tx: 8.4567 -> 8.5478 (better reliability)
+Global MAC stress dropped a lot:
+mac_drop_count: 15148 -> 11751 (large reduction)
+mac_drop_per_tx: 0.3277 -> 0.2954 (better)
+Compared to vo_stable, guarded keeps VO essentially same but avoids BE collapse:
+BE reach: 9.62 vs 8.70
+BE max delay: 4.15 ms vs 27.26 ms
+BE jitter: 0.0536 vs 0.0842
+Mechanism (what changed behavior)
+
+vo_guarded likely uses bounded blocking (shorter block windows / lower continuous blocking cap), so BE is degraded but not starved.
+That avoids large BE queue bursts and retransmission cascades that pollute contention and hurt everyone.
+VO still keeps first access advantage (AIFS/CW/TXOP), so VO QoS improves while the channel stays more stable.
+Why vo_stable looked worse overall
+
+It likely over-blocks BE during VO demand.
+This creates rare but huge BE tail events (be_delay_max_ms = 27+ ms), which indicate instability.
+Its BE p95 looks fine only because those extreme spikes are rare (so p95 hides them).
+Important caveat
+
+You still have 1 run/config and very different be_tx_count across configs (e.g., 38883 vs 62083), so load is not perfectly matched.
+Conclusion is directionally strong, but confirm with multiple seeds (at least 5) before locking it in.
+Also, your mac_drop_be_count / mac_drop_vo_count are still 0/NaN here, so per-AC attribution likely wasn’t captured in this dataset yet (old fallback path).

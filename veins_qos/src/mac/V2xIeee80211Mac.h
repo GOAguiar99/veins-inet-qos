@@ -26,7 +26,7 @@ class V2xIeee80211Mac : public inet::ieee80211::Ieee80211Mac
 
     TrackedAc inferAccessCategory(const inet::Packet *packet) const;
     void countPacketDrop(const inet::Packet *packet, const inet::PacketDropDetails *details);
-    void subscribePacketDropSignalsRecursively(omnetpp::cModule *module);
+    void subscribePacketDropSignal();
     void recordPacketDropScalars();
 
     virtual void initialize(int stage) override;

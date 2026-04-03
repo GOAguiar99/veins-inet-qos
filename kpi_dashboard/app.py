@@ -36,10 +36,16 @@ CONFIG_SUMMARY_COLUMNS = [
     "vo_tx_count",
     "vo_rx_count",
     "mac_drop_count",
+    "mac_drop_ac_sum_count",
+    "mac_drop_bk_count",
     "mac_drop_be_count",
+    "mac_drop_vi_count",
     "mac_drop_vo_count",
+    "mac_drop_unclassified_count",
     "mac_drop_queue_overflow_count",
     "mac_drop_retry_limit_count",
+    "mac_drop_be_per_be_tx",
+    "mac_drop_vo_per_vo_tx",
     "mac_drop_per_tx",
 ]
 
@@ -60,6 +66,7 @@ COMPARISON_COLUMNS = [
     "mac_drop_delta_count",
     "mac_drop_be_delta_count",
     "mac_drop_vo_delta_count",
+    "mac_drop_unclassified_delta_count",
     "mac_drop_per_tx_delta",
 ]
 
@@ -96,10 +103,16 @@ DISPLAY_LABELS = {
     "vo_tx_count": "VO TX",
     "vo_rx_count": "VO RX",
     "mac_drop_count": "MAC Packet Drop Count",
+    "mac_drop_ac_sum_count": "MAC AC Sum Drop Count",
+    "mac_drop_bk_count": "MAC BK Drop Count",
     "mac_drop_be_count": "MAC BE Drop Count",
+    "mac_drop_vi_count": "MAC VI Drop Count",
     "mac_drop_vo_count": "MAC VO Drop Count",
+    "mac_drop_unclassified_count": "MAC Unclassified Drop Count",
     "mac_drop_queue_overflow_count": "MAC Drop Queue Overflow",
     "mac_drop_retry_limit_count": "MAC Drop Retry Limit",
+    "mac_drop_be_per_be_tx": "MAC BE Drops per BE TX",
+    "mac_drop_vo_per_vo_tx": "MAC VO Drops per VO TX",
     "mac_drop_per_tx": "MAC Drops per App TX",
     "baseline": "Baseline",
     "vo_delay_p95_delta_ms": "VO P95 Delta (ms)",
@@ -115,6 +128,7 @@ DISPLAY_LABELS = {
     "mac_drop_delta_count": "MAC Drop Delta (count)",
     "mac_drop_be_delta_count": "MAC BE Drop Delta (count)",
     "mac_drop_vo_delta_count": "MAC VO Drop Delta (count)",
+    "mac_drop_unclassified_delta_count": "MAC Unclassified Drop Delta (count)",
     "mac_drop_per_tx_delta": "MAC Drops per App TX Delta",
 }
 
@@ -142,9 +156,12 @@ ROUND_COLUMNS = [
     "vo_rx_per_tx_delta",
     "be_rx_per_tx_delta",
     "mac_drop_per_tx",
+    "mac_drop_be_per_be_tx",
+    "mac_drop_vo_per_vo_tx",
     "mac_drop_delta_count",
     "mac_drop_be_delta_count",
     "mac_drop_vo_delta_count",
+    "mac_drop_unclassified_delta_count",
     "mac_drop_per_tx_delta",
 ]
 
@@ -164,8 +181,14 @@ RUN_EXPORT_COLUMNS = [
     "vo_tx_count",
     "vo_rx_count",
     "mac_drop_count",
+    "mac_drop_ac_sum_count",
+    "mac_drop_bk_count",
     "mac_drop_be_count",
+    "mac_drop_vi_count",
     "mac_drop_vo_count",
+    "mac_drop_unclassified_count",
+    "mac_drop_be_per_be_tx",
+    "mac_drop_vo_per_vo_tx",
     "mac_drop_per_tx",
 ]
 
@@ -376,6 +399,7 @@ def _build_comparison_summary(config_summary: pd.DataFrame, baseline_config: str
         comparison_row["mac_drop_delta_count"] = row["mac_drop_count"] - base["mac_drop_count"]
         comparison_row["mac_drop_be_delta_count"] = row["mac_drop_be_count"] - base["mac_drop_be_count"]
         comparison_row["mac_drop_vo_delta_count"] = row["mac_drop_vo_count"] - base["mac_drop_vo_count"]
+        comparison_row["mac_drop_unclassified_delta_count"] = row["mac_drop_unclassified_count"] - base["mac_drop_unclassified_count"]
         comparison_row["mac_drop_per_tx_delta"] = row["mac_drop_per_tx"] - base["mac_drop_per_tx"]
         rows.append(comparison_row)
 
@@ -541,23 +565,36 @@ def _plot_delta_tradeoff(comparison_summary: pd.DataFrame, simulation_label: str
 def _plot_packet_loss(frame: pd.DataFrame, simulation_label: str):
     id_vars = [column for column in ("config", "run") if column in frame.columns]
     hover_data = ["run"] if "run" in frame.columns else None
+    candidate_columns = [
+        "mac_drop_count",
+        "mac_drop_ac_sum_count",
+        "mac_drop_bk_count",
+        "mac_drop_be_count",
+        "mac_drop_vi_count",
+        "mac_drop_vo_count",
+        "mac_drop_unclassified_count",
+        "mac_drop_queue_overflow_count",
+        "mac_drop_retry_limit_count",
+    ]
+    available_columns = [column for column in candidate_columns if column in frame.columns]
+    if not available_columns:
+        return px.scatter(title=f"Packet Loss / Drops ({simulation_label})")
+
     melted = frame.melt(
         id_vars=id_vars,
-        value_vars=[
-            "mac_drop_count",
-            "mac_drop_be_count",
-            "mac_drop_vo_count",
-            "mac_drop_queue_overflow_count",
-            "mac_drop_retry_limit_count",
-        ],
+        value_vars=available_columns,
         var_name="metric",
         value_name="count",
     )
     melted["metric"] = melted["metric"].map(
         {
             "mac_drop_count": "MAC Drop Total",
+            "mac_drop_ac_sum_count": "MAC Drop AC Sum",
+            "mac_drop_bk_count": "MAC Drop BK (AC_BK)",
             "mac_drop_be_count": "MAC Drop BE (AC_BE)",
+            "mac_drop_vi_count": "MAC Drop VI (AC_VI)",
             "mac_drop_vo_count": "MAC Drop VO (AC_VO)",
+            "mac_drop_unclassified_count": "MAC Drop Unclassified",
             "mac_drop_queue_overflow_count": "MAC Drop Queue Overflow",
             "mac_drop_retry_limit_count": "MAC Drop Retry Limit",
         }

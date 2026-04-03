@@ -121,14 +121,13 @@ void V2xIeee80211Mac::countPacketDrop(const Packet *packet, const PacketDropDeta
     byAc[acIndex]++;
 }
 
-void V2xIeee80211Mac::subscribePacketDropSignalsRecursively(cModule *module)
+void V2xIeee80211Mac::subscribePacketDropSignal()
 {
-    if (module == nullptr)
-        return;
-
-    module->subscribe(packetDroppedSignal, this);
-    for (cModule::SubmoduleIterator it(module); !it.end(); ++it)
-        subscribePacketDropSignalsRecursively(*it);
+    // IMPORTANT: subscribe only on this MAC module.
+    // packetDroppedSignal is propagated from descendants (HCF/DCF/RX/queues)
+    // to ancestors, so recursive subscriptions would count the same drop
+    // event multiple times.
+    subscribe(packetDroppedSignal, this);
 }
 
 void V2xIeee80211Mac::recordPacketDropScalars()
@@ -160,7 +159,7 @@ void V2xIeee80211Mac::initialize(int stage)
     if (stage == INITSTAGE_LINK_LAYER) {
         packetDropCountByAc.fill(0);
         packetDropCountByReasonAndAc.clear();
-        subscribePacketDropSignalsRecursively(this);
+        subscribePacketDropSignal();
     }
 }
 
