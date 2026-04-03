@@ -15,6 +15,9 @@ APP1_RE = re.compile(r"^Scenario\.node\[\d+\]\.app\[1\]$")
 APP_MODULE_RE = re.compile(r"^Scenario\.node\[(\d+)\]\.app\[([01])\]$")
 FSM_CONTROLLER_RE = re.compile(r"^Scenario\.node\[(\d+)\]\.wlan\[\d+\]\.mac\.hcf\.FSMController$")
 MAC_RE = re.compile(r"^Scenario\.node\[\d+\]\.wlan\[\d+\]\.mac$")
+MAC_AC_DROP_SCALAR_RE = re.compile(
+    r"^packetDropAc(Bk|Be|Vi|Vo|Unclassified)(?:Reason([A-Za-z0-9]+))?Count$"
+)
 EDCAF_PENDING_QUEUE_RE = re.compile(
     r"^Scenario\.node\[\d+\]\.wlan\[\d+\]\.mac\.hcf\.edca\.edcaf\[(\d+)\]\.pendingQueue$"
 )
@@ -316,6 +319,16 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
     mac_drop_be_retry_limit_total = 0.0
     mac_drop_vo_queue_overflow_total = 0.0
     mac_drop_vo_retry_limit_total = 0.0
+    mac_drop_bk_total = 0.0
+    mac_drop_be_total_from_mac = 0.0
+    mac_drop_vi_total = 0.0
+    mac_drop_vo_total_from_mac = 0.0
+    mac_drop_unclassified_total = 0.0
+    saw_bk_ac_metrics = False
+    saw_be_ac_metrics_from_mac = False
+    saw_vi_ac_metrics = False
+    saw_vo_ac_metrics_from_mac = False
+    saw_unclassified_ac_metrics = False
     saw_be_ac_metrics = False
     saw_vo_ac_metrics = False
 
@@ -370,6 +383,27 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
                     mac_drop_queue_overflow_total += value
                 elif metric == "packetDropRetryLimitReached:count":
                     mac_drop_retry_limit_total += value
+                else:
+                    mac_ac_drop_match = MAC_AC_DROP_SCALAR_RE.match(metric)
+                    if mac_ac_drop_match:
+                        ac_name, reason_name = mac_ac_drop_match.groups()
+                        # Only top-level per-AC totals are used for dashboard attribution.
+                        if reason_name is None:
+                            if ac_name == "Bk":
+                                saw_bk_ac_metrics = True
+                                mac_drop_bk_total += value
+                            elif ac_name == "Be":
+                                saw_be_ac_metrics_from_mac = True
+                                mac_drop_be_total_from_mac += value
+                            elif ac_name == "Vi":
+                                saw_vi_ac_metrics = True
+                                mac_drop_vi_total += value
+                            elif ac_name == "Vo":
+                                saw_vo_ac_metrics_from_mac = True
+                                mac_drop_vo_total_from_mac += value
+                            elif ac_name == "Unclassified":
+                                saw_unclassified_ac_metrics = True
+                                mac_drop_unclassified_total += value
             else:
                 pending_queue_match = EDCAF_PENDING_QUEUE_RE.match(module)
                 if pending_queue_match and metric == "droppedPacketsQueueOverflow:count":
@@ -421,10 +455,26 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
     vo_delay_p99_s = vec_stats.get("vo_delay_p99_s", math.nan)
     vo_jitter_s = vec_stats.get("vo_jitter_s", math.nan)
 
-    mac_drop_be_total = mac_drop_be_queue_overflow_total + mac_drop_be_retry_limit_total
-    mac_drop_vo_total = mac_drop_vo_queue_overflow_total + mac_drop_vo_retry_limit_total
-    mac_drop_be_count = int(round(mac_drop_be_total)) if saw_be_ac_metrics else math.nan
-    mac_drop_vo_count = int(round(mac_drop_vo_total)) if saw_vo_ac_metrics else math.nan
+    mac_drop_be_total_fallback = mac_drop_be_queue_overflow_total + mac_drop_be_retry_limit_total
+    mac_drop_vo_total_fallback = mac_drop_vo_queue_overflow_total + mac_drop_vo_retry_limit_total
+
+    if saw_be_ac_metrics_from_mac:
+        mac_drop_be_count = int(round(mac_drop_be_total_from_mac))
+    elif saw_be_ac_metrics:
+        mac_drop_be_count = int(round(mac_drop_be_total_fallback))
+    else:
+        mac_drop_be_count = math.nan
+
+    if saw_vo_ac_metrics_from_mac:
+        mac_drop_vo_count = int(round(mac_drop_vo_total_from_mac))
+    elif saw_vo_ac_metrics:
+        mac_drop_vo_count = int(round(mac_drop_vo_total_fallback))
+    else:
+        mac_drop_vo_count = math.nan
+
+    mac_drop_bk_count = int(round(mac_drop_bk_total)) if saw_bk_ac_metrics else math.nan
+    mac_drop_vi_count = int(round(mac_drop_vi_total)) if saw_vi_ac_metrics else math.nan
+    mac_drop_unclassified_count = int(round(mac_drop_unclassified_total)) if saw_unclassified_ac_metrics else math.nan
     app_tx_total = be_tx_total + vo_tx_total
 
     return {
@@ -470,8 +520,11 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
         "mac_drop_count": int(round(mac_drop_total)),
         "mac_drop_queue_overflow_count": int(round(mac_drop_queue_overflow_total)),
         "mac_drop_retry_limit_count": int(round(mac_drop_retry_limit_total)),
+        "mac_drop_bk_count": mac_drop_bk_count,
         "mac_drop_be_count": mac_drop_be_count,
+        "mac_drop_vi_count": mac_drop_vi_count,
         "mac_drop_vo_count": mac_drop_vo_count,
+        "mac_drop_unclassified_count": mac_drop_unclassified_count,
         "mac_drop_per_tx": (mac_drop_total / app_tx_total) if app_tx_total > 0 else math.nan,
     }
 

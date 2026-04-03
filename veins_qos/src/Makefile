@@ -36,6 +36,7 @@ O = $(PROJECT_OUTPUT_DIR)/$(CONFIGNAME)/$(PROJECTRELATIVE_PATH)
 OBJS = \
     $O/mac/V2xEdcaFsmController.o \
     $O/mac/V2xHcf.o \
+    $O/mac/V2xIeee80211Mac.o \
     $O/qos/QosClassifier.o \
     $O/traffic/CrashBurstApp.o \
     $O/traffic/CritPacketSender.o \

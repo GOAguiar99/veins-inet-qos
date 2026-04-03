@@ -163,7 +163,9 @@ The lower-right area indicates stronger VO protection with BE penalty, which is 
 - `MAC drops (retry limit)`: sum of `packetDropRetryLimitReached:count` over `Scenario.node[*].wlan[*].mac`
 - `MAC drops per app TX`: `mac_drop_count / (BE_TX + VO_TX)`
 
-For runs without EDCA per-AC counters (for example plain DCF), BE/VO MAC drop split is reported as `NaN` because packet-type attribution is not available from MAC scalars.
+For legacy runs without per-AC attribution scalars, the dashboard falls back to EDCAF queue-overflow/retry counters (or `NaN` when unavailable, for example plain DCF).
+- If `V2xIeee80211Mac` instrumentation is enabled, BE/VO/BK/VI/unclassified totals are read from
+  top-level MAC scalars such as `packetDropAcBeCount` and `packetDropAcVoCount`, covering all MAC drop reasons observed in the MAC subtree.
 - `Network throughput over time`: total aggregated from `app[*].packetSent:vector(packetBytes)` binned per second
 - `BE throughput over time`: aggregated from `app[0].packetSent:vector(packetBytes)` binned per second
 - `VO throughput over time`: aggregated from `app[1].packetSent:vector(packetBytes)` binned per second

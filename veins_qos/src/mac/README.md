@@ -6,6 +6,22 @@ This folder contains the custom MAC pieces used by the `edca_v2x` experiments.
 
 - `V2xHcf`: custom HCF wrapper that decides when to suppress BE access requests.
 - `V2xEdcaFsmController`: small FSM that tracks V2X alert state and exposes whether BE must stay blocked.
+- `V2xIeee80211Mac`: instrumentation wrapper over `Ieee80211Mac` that records per-AC drop counters
+  (BK/BE/VI/VO/Unclassified) and per-AC per-reason drop scalars.
+
+### MAC drop observability scalars
+
+`V2xIeee80211Mac` records:
+
+- Per AC totals:
+  - `packetDropAcBkCount`
+  - `packetDropAcBeCount`
+  - `packetDropAcViCount`
+  - `packetDropAcVoCount`
+  - `packetDropAcUnclassifiedCount`
+- Per AC and reason:
+  - `packetDropAc<Ac>Reason<Reason>Count`
+  - Example: `packetDropAcVoReasonRetryLimitReachedCount`
 
 ## FSM states
 
