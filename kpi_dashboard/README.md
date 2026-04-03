@@ -168,6 +168,7 @@ The lower-right area indicates stronger VO protection with BE penalty, which is 
 - `MAC drops per app TX`: `mac_drop_sum_count / (BE_TX + VO_TX)`
 - `MAC BE drops per BE TX`: `mac_drop_be_count / BE_TX`
 - `MAC VO drops per VO TX`: `mac_drop_vo_count / VO_TX`
+- `MAC drop harmonization`: if BE/VO/unclassified AC-attributed totals sum to approximately `2x` `packetDrop:count`, the dashboard divides AC-attributed counters by `2` to align them with the total-drop basis.
 
 For legacy runs without per-AC attribution scalars, the dashboard falls back to EDCAF queue-overflow/retry counters (or `NaN` when unavailable, for example plain DCF).
 - If `V2xIeee80211Mac` instrumentation is enabled, BE/VO totals are read from

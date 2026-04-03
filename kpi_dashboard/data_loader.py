@@ -443,26 +443,46 @@ def parse_sca_file(path: Path) -> Dict[str, float]:
     mac_drop_vo_total_fallback = mac_drop_vo_queue_overflow_total + mac_drop_vo_retry_limit_total
 
     if saw_be_ac_metrics_from_mac:
-        mac_drop_be_count = int(round(mac_drop_be_total_from_mac))
+        mac_drop_be_value = mac_drop_be_total_from_mac
     elif saw_be_ac_metrics:
-        mac_drop_be_count = int(round(mac_drop_be_total_fallback))
+        mac_drop_be_value = mac_drop_be_total_fallback
     else:
-        mac_drop_be_count = math.nan
+        mac_drop_be_value = math.nan
 
     if saw_vo_ac_metrics_from_mac:
-        mac_drop_vo_count = int(round(mac_drop_vo_total_from_mac))
+        mac_drop_vo_value = mac_drop_vo_total_from_mac
     elif saw_vo_ac_metrics:
-        mac_drop_vo_count = int(round(mac_drop_vo_total_fallback))
+        mac_drop_vo_value = mac_drop_vo_total_fallback
     else:
-        mac_drop_vo_count = math.nan
+        mac_drop_vo_value = math.nan
 
     if saw_unclassified_ac_metrics:
-        mac_drop_unclassified_count = int(round(mac_drop_unclassified_total))
-        if mac_drop_total > 0 and mac_drop_unclassified_count > 0:
-            ratio = mac_drop_unclassified_count / mac_drop_total
-            # Some MAC instrumentation reports per-AC totals at roughly 2x packetDrop:count.
-            if 1.9 <= ratio <= 2.1:
-                mac_drop_unclassified_count = int(round(mac_drop_unclassified_count / 2.0))
+        mac_drop_unclassified_value = mac_drop_unclassified_total
+    else:
+        mac_drop_unclassified_value = math.nan
+
+    attributed_drop_values = [
+        value
+        for value in (mac_drop_be_value, mac_drop_vo_value, mac_drop_unclassified_value)
+        if not math.isnan(value)
+    ]
+    if mac_drop_total > 0 and attributed_drop_values:
+        attributed_drop_sum = sum(attributed_drop_values)
+        ratio = attributed_drop_sum / mac_drop_total
+        # Some MAC instrumentation reports per-AC totals at roughly 2x packetDrop:count.
+        if 1.9 <= ratio <= 2.1:
+            if not math.isnan(mac_drop_be_value):
+                mac_drop_be_value /= 2.0
+            if not math.isnan(mac_drop_vo_value):
+                mac_drop_vo_value /= 2.0
+            if not math.isnan(mac_drop_unclassified_value):
+                mac_drop_unclassified_value /= 2.0
+
+    mac_drop_be_count = int(round(mac_drop_be_value)) if not math.isnan(mac_drop_be_value) else math.nan
+    mac_drop_vo_count = int(round(mac_drop_vo_value)) if not math.isnan(mac_drop_vo_value) else math.nan
+
+    if not math.isnan(mac_drop_unclassified_value):
+        mac_drop_unclassified_count = int(round(mac_drop_unclassified_value))
     else:
         no_be_attribution = math.isnan(mac_drop_be_count) or mac_drop_be_count == 0
         no_vo_attribution = math.isnan(mac_drop_vo_count) or mac_drop_vo_count == 0
