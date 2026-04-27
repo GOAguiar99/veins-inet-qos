@@ -18,6 +18,12 @@ This dashboard reads OMNeT++ scalar files (`.sca`) and delay vectors (`.vec`) an
 
 It is designed for fast comparisons inside the two active highway density-study packages.
 
+Performance behavior:
+- the first load builds a cache under each `results/.kpi_cache/` directory
+- later reloads reuse cached summaries and cached 1-second timelines instead of reparsing raw `.sca`/`.vec` files
+- heavy timeline graphs are loaded on demand from that cache
+- the AI snapshot is generated on demand from the cache instead of being rebuilt live on every UI update
+
 The dashboard is scenario-scoped:
 - you select one simulation package at a time (`Highway Heavy` or `Highway Light`)
 - the plots and table only show runs from that selected scenario's `results/` folder
@@ -67,6 +73,8 @@ Inside the UI:
 - use the `Simulation` dropdown to choose which scenario package to view
 - use the `Baseline config` dropdown to select the comparison reference
 - the header shows `Simulation: ...` so it is always clear which package is loaded
+- use `Load Timelines` only when you want the time-series graphs
+- use `Generate Snapshot` before copying or downloading the AI-sharing JSON
 
 Open:
 - `http://127.0.0.1:8050`
@@ -98,18 +106,20 @@ python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations
    - BE/VO TX-RX count chart
    - MAC drop breakdown chart (`total`, `BE`, `VO`, `queue overflow`, `retry limit`)
    - normalized drop-rate chart (`overall`, `BE per BE_TX`, `VO per VO_TX`)
-   - simulation timeline chart (throughput + active TX nodes over time)
-   - protection-vs-cost scatter (`BE P95 delay` vs `VO P95 delay`, marker size = `VO RX per TX`)
+   - protection-vs-cost scatter (`BE P95 delay` vs `VO P95 delay`, marker size = `VO RX per TX`) using one point per config
    - comparison-vs-baseline table (absolute + percent deltas)
    - delta protection-vs-cost scatter (`BE P95 delta` vs `VO P95 delta`)
    - `Share With AI` section:
-   - click the copy icon to copy a JSON snapshot
+   - click `Generate Snapshot`
+   - then click the copy icon to copy a JSON snapshot
    - or click `Download Snapshot JSON`
    - paste the snapshot in chat for feedback
+   - timeline charts are lazy-loaded:
+   - click `Load Timelines` only when you need throughput/state curves
 
 ## Share Snapshot With AI
 
-The dashboard includes a `Share With AI` panel that generates a JSON snapshot from the currently loaded data and selected baseline.
+The dashboard includes a `Share With AI` panel that generates a JSON snapshot on demand from the cached dataset and selected baseline.
 
 Snapshot includes:
 - simulation label
@@ -122,8 +132,27 @@ Snapshot includes:
 Workflow:
 1. Load your scenario and baseline in the dashboard.
 2. Open `Share With AI`.
-3. Click copy icon (clipboard) or download JSON.
-4. Paste the JSON in chat and ask for KPI interpretation.
+3. Click `Generate Snapshot`.
+4. Click copy icon (clipboard) or download JSON.
+5. Paste the JSON in chat and ask for KPI interpretation.
+
+## Cache
+
+The dashboard stores cache artifacts inside each scenario results directory:
+
+- `results/.kpi_cache/meta.json`
+- `results/.kpi_cache/run_rows.json.gz`
+- `results/.kpi_cache/config_summary.json.gz`
+- `results/.kpi_cache/timeline_rows_1s.json.gz`
+
+Cache invalidation happens automatically when:
+
+- any `.sca` file changes
+- any `.vec` file changes
+- the dashboard cache schema version changes
+- the timeline bin size changes
+
+This keeps the first load faithful to the raw OMNeT++ outputs while making repeated reloads much faster, especially for `Highway Heavy`.
 
 ## Comparison View
 
@@ -185,6 +214,8 @@ The dashboard shows timeline data in two separate plots:
 - a state timeline (active TX nodes plus LISTENING/BLOCKING/SENDING occupancy)
 
 This avoids large throughput values visually compressing state-count curves.
+
+These timeline plots are loaded lazily from `timeline_rows_1s.json.gz` when you click `Load Timelines`.
 
 If `LISTENING/BLOCKING/SENDING` curves are missing, rerun simulations after rebuilding `veins_qos` so the new `v2xState` signal is recorded into `.vec`.
 

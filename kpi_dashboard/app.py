@@ -8,12 +8,22 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
-from dash import Dash, Input, Output, State, dash_table, dcc, html
+from dash import Dash, Input, Output, State, ctx, dash_table, dcc, html
 
 try:
-    from .data_loader import load_results, load_timeseries
+    from .data_loader import (
+        DEFAULT_TIMELINE_BIN_SIZE_S,
+        load_cached_run_rows,
+        load_cached_timeline_rows,
+        load_dashboard_dataset,
+    )
 except ImportError:
-    from data_loader import load_results, load_timeseries
+    from data_loader import (
+        DEFAULT_TIMELINE_BIN_SIZE_S,
+        load_cached_run_rows,
+        load_cached_timeline_rows,
+        load_dashboard_dataset,
+    )
 
 
 CONFIG_SUMMARY_COLUMNS = [
@@ -118,6 +128,7 @@ DISPLAY_LABELS = {
     "run": "Run",
     "runs": "Runs",
     "source_file": "Source File",
+    "time_s": "Time (s)",
     "be_delay_ms": "BE Mean Delay (ms)",
     "be_delay_min_ms": "BE Min Delay (ms)",
     "be_delay_p95_ms": "BE P95 Delay (ms)",
@@ -134,6 +145,13 @@ DISPLAY_LABELS = {
     "vo_rx_per_tx": "VO RX per TX",
     "vo_tx_count": "VO TX",
     "vo_rx_count": "VO RX",
+    "throughput_kbps": "Total Throughput (kbps)",
+    "throughput_be_kbps": "BE Throughput (kbps)",
+    "throughput_vo_kbps": "VO Throughput (kbps)",
+    "active_tx_nodes": "Active TX Nodes",
+    "listening_nodes": "Nodes in LISTENING",
+    "blocking_nodes": "Nodes in BLOCKING",
+    "sending_nodes": "Nodes in SENDING",
     "mac_drop_sum_count": "MAC Sum of All Drops",
     "mac_drop_be_count": "MAC BE Drop Count",
     "mac_drop_vo_count": "MAC VO Drop Count",
@@ -172,6 +190,7 @@ DISPLAY_LABELS = {
 }
 
 ROUND_COLUMNS = [
+    "time_s",
     "be_delay_ms",
     "be_delay_min_ms",
     "be_delay_p95_ms",
@@ -184,6 +203,13 @@ ROUND_COLUMNS = [
     "vo_delay_max_ms",
     "vo_jitter_ms",
     "vo_rx_per_tx",
+    "throughput_kbps",
+    "throughput_be_kbps",
+    "throughput_vo_kbps",
+    "active_tx_nodes",
+    "listening_nodes",
+    "blocking_nodes",
+    "sending_nodes",
     "vo_delay_p95_delta_ms",
     "vo_delay_p95_delta_pct",
     "be_delay_p95_delta_ms",
@@ -247,43 +273,59 @@ def _records_for_json(frame: pd.DataFrame) -> list[dict]:
     return safe.to_dict("records")
 
 
-def _build_feedback_snapshot(payload: dict | None, baseline_config: str | None) -> dict:
-    if not payload:
-        return {}
+def _frame_from_records(records: list[dict] | None, columns: list[str]) -> pd.DataFrame:
+    if not records:
+        return pd.DataFrame(columns=columns)
+    frame = pd.DataFrame(records)
+    for column in columns:
+        if column not in frame.columns:
+            frame[column] = math.nan
+    return frame[columns]
 
-    rows = payload.get("rows", [])
-    timeline_rows = payload.get("timeline_rows", [])
-    simulation_label = payload.get("simulation_label", "Custom")
-    if not rows:
-        return {
-            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-            "simulation_label": simulation_label,
-            "message": "No result rows loaded.",
-        }
 
-    frame = pd.DataFrame(rows)
-    timeline_frame = pd.DataFrame(timeline_rows) if timeline_rows else pd.DataFrame()
-    config_summary = _build_config_summary(frame)
+def _default_snapshot_text() -> str:
+    return "Click Generate Snapshot to build a shareable JSON export from the cached dataset."
+
+
+def _placeholder_figure(title: str, message: str):
+    fig = px.scatter(title=title)
+    fig.update_xaxes(visible=False)
+    fig.update_yaxes(visible=False)
+    fig.update_layout(showlegend=False)
+    fig.add_annotation(
+        text=message,
+        x=0.5,
+        y=0.5,
+        xref="paper",
+        yref="paper",
+        showarrow=False,
+    )
+    return fig
+
+
+def _build_feedback_snapshot(results_dir: Path, simulation_label: str, config_summary: pd.DataFrame, baseline_config: str | None) -> dict:
+    run_frame = load_cached_run_rows(results_dir, bin_size_s=DEFAULT_TIMELINE_BIN_SIZE_S)
+    timeline_frame = load_cached_timeline_rows(results_dir, bin_size_s=DEFAULT_TIMELINE_BIN_SIZE_S)
     config_summary_display = _high_load_only_or_all(config_summary)
     comparison_summary, baseline_used = _build_comparison_summary(config_summary, baseline_config)
     v2x_workload_comparison = _build_v2x_workload_comparison(config_summary)
-    config_list = _ordered_configs(frame["config"].astype(str).unique().tolist())
-    run_columns = [column for column in ("config", "run", "source_file") if column in frame.columns]
-    run_columns += [column for column in frame.columns if column not in set(run_columns)]
+    config_list = _ordered_configs(config_summary["config"].astype(str).unique().tolist()) if not config_summary.empty else []
+
+    run_columns = [column for column in ("config", "run", "source_file") if column in run_frame.columns]
+    run_columns += [column for column in run_frame.columns if column not in set(run_columns)]
     if run_columns:
         sort_by = [column for column in ("config", "run") if column in run_columns] or [run_columns[0]]
-        run_level = _display_frame(frame, run_columns).sort_values(sort_by).reset_index(drop=True)
+        run_level = _display_frame(run_frame, run_columns).sort_values(sort_by).reset_index(drop=True)
     else:
         run_level = pd.DataFrame()
 
-    if not timeline_frame.empty:
-        timeline_columns = [column for column in ("config", "run", "source_file", "time_s") if column in timeline_frame.columns]
-        timeline_columns += [column for column in timeline_frame.columns if column not in set(timeline_columns)]
+    timeline_columns = [column for column in ("config", "time_s") if column in timeline_frame.columns]
+    timeline_columns += [column for column in timeline_frame.columns if column not in set(timeline_columns)]
+    if timeline_columns:
         timeline_level = _display_frame(timeline_frame, timeline_columns).sort_values(
-            [column for column in ("config", "run", "time_s") if column in timeline_frame.columns]
+            [column for column in ("config", "time_s") if column in timeline_frame.columns]
         ).reset_index(drop=True)
     else:
-        timeline_columns = []
         timeline_level = pd.DataFrame()
 
     return {
@@ -291,8 +333,8 @@ def _build_feedback_snapshot(payload: dict | None, baseline_config: str | None) 
         "simulation_label": simulation_label,
         "selected_baseline": baseline_config,
         "baseline_used": baseline_used,
-        "run_count": int(len(frame)),
-        "config_count": int(frame["config"].nunique()),
+        "run_count": int(len(run_frame)),
+        "config_count": int(config_summary["config"].nunique()) if not config_summary.empty else 0,
         "configs": config_list,
         "run_level_columns": run_columns,
         "run_level_metrics": _records_for_json(run_level),
@@ -410,27 +452,15 @@ def _high_load_only_or_all(config_summary: pd.DataFrame) -> pd.DataFrame:
     return high_load_summary if not high_load_summary.empty else config_summary
 
 
+def _baseline_option_values(config_summary: pd.DataFrame) -> list[str]:
+    comparison_source = _high_load_only_or_all(config_summary)
+    return _ordered_configs(comparison_source["config"].astype(str).tolist()) if not comparison_source.empty else []
+
+
 def _safe_pct_delta(value: float, baseline_value: float) -> float:
     if math.isnan(value) or math.isnan(baseline_value) or baseline_value == 0:
         return math.nan
     return ((value - baseline_value) / baseline_value) * 100.0
-
-
-def _build_config_summary(frame: pd.DataFrame) -> pd.DataFrame:
-    numeric_columns = [column for column in CONFIG_SUMMARY_COLUMNS if column not in {"config", "runs"}]
-    summary = (
-        frame.groupby("config", as_index=False)[numeric_columns]
-        .mean(numeric_only=True)
-        .sort_values("config")
-        .reset_index(drop=True)
-    )
-    run_counts = frame.groupby("config").size().rename("runs").reset_index()
-    merged = run_counts.merge(summary, on="config")
-    order = _ordered_configs(merged["config"].astype(str).tolist())
-    merged["config"] = pd.Categorical(merged["config"], categories=order, ordered=True)
-    merged = merged.sort_values("config").reset_index(drop=True)
-    merged["config"] = merged["config"].astype(str)
-    return merged[CONFIG_SUMMARY_COLUMNS]
 
 
 def _build_comparison_summary(config_summary: pd.DataFrame, baseline_config: str | None) -> tuple[pd.DataFrame, str | None]:
@@ -438,7 +468,6 @@ def _build_comparison_summary(config_summary: pd.DataFrame, baseline_config: str
         return pd.DataFrame(columns=COMPARISON_COLUMNS), None
 
     comparison_source = _high_load_only_or_all(config_summary)
-
     config_values = comparison_source["config"].astype(str).tolist()
     baseline = baseline_config if baseline_config in set(config_values) else _preferred_baseline(config_values)
     if baseline is None:
@@ -479,11 +508,6 @@ def _build_comparison_summary(config_summary: pd.DataFrame, baseline_config: str
     comparison = comparison.sort_values("config").reset_index(drop=True)
     comparison["config"] = comparison["config"].astype(str)
     return comparison[COMPARISON_COLUMNS], baseline
-
-
-def _workload_sort_key(workload: str) -> tuple[int, str]:
-    order = {"low": 0, "medium": 1, "high": 2}
-    return (order.get(workload, 99), workload)
 
 
 def _extract_v2x_variant_and_workload(config: str) -> tuple[str | None, str | None]:
@@ -573,10 +597,11 @@ def _build_v2x_workload_comparison(config_summary: pd.DataFrame) -> pd.DataFrame
 
 
 def _plot_latency_profile(frame: pd.DataFrame, simulation_label: str):
-    id_vars = [column for column in ("config", "run") if column in frame.columns]
-    hover_data = ["run"] if "run" in frame.columns else None
+    if frame.empty:
+        return _placeholder_figure(f"Latency Profile ({simulation_label})", "No summary data loaded.")
+
     melted = frame.melt(
-        id_vars=id_vars,
+        id_vars=["config"],
         value_vars=list(LATENCY_PROFILE_LABELS.keys()),
         var_name="metric",
         value_name="delay_ms",
@@ -591,7 +616,6 @@ def _plot_latency_profile(frame: pd.DataFrame, simulation_label: str):
         color="statistic",
         facet_row="traffic_class",
         barmode="group",
-        hover_data=hover_data,
         title=f"Latency Profile ({simulation_label})",
     )
     fig.for_each_annotation(lambda annotation: annotation.update(text=annotation.text.split("=")[-1]))
@@ -600,10 +624,11 @@ def _plot_latency_profile(frame: pd.DataFrame, simulation_label: str):
 
 
 def _plot_jitter(frame: pd.DataFrame, simulation_label: str):
-    id_vars = [column for column in ("config", "run") if column in frame.columns]
-    hover_data = ["run"] if "run" in frame.columns else None
+    if frame.empty:
+        return _placeholder_figure(f"Delay Variation ({simulation_label})", "No summary data loaded.")
+
     melted = frame.melt(
-        id_vars=id_vars,
+        id_vars=["config"],
         value_vars=["be_jitter_ms", "vo_jitter_ms"],
         var_name="metric",
         value_name="jitter_ms",
@@ -620,7 +645,6 @@ def _plot_jitter(frame: pd.DataFrame, simulation_label: str):
         y="jitter_ms",
         color="metric",
         barmode="group",
-        hover_data=hover_data,
         title=f"Delay Variation ({simulation_label})",
     )
     fig.update_layout(yaxis_title="Jitter (ms)", xaxis_title="Config")
@@ -628,10 +652,11 @@ def _plot_jitter(frame: pd.DataFrame, simulation_label: str):
 
 
 def _plot_reception_efficiency(frame: pd.DataFrame, simulation_label: str):
-    id_vars = [column for column in ("config", "run") if column in frame.columns]
-    hover_data = ["run"] if "run" in frame.columns else None
+    if frame.empty:
+        return _placeholder_figure(f"Multicast Reach ({simulation_label})", "No summary data loaded.")
+
     melted = frame.melt(
-        id_vars=id_vars,
+        id_vars=["config"],
         value_vars=["be_rx_per_tx", "vo_rx_per_tx"],
         var_name="metric",
         value_name="rx_per_tx",
@@ -648,7 +673,6 @@ def _plot_reception_efficiency(frame: pd.DataFrame, simulation_label: str):
         y="rx_per_tx",
         color="metric",
         barmode="group",
-        hover_data=hover_data,
         title=f"Multicast Reach ({simulation_label})",
     )
     fig.update_layout(yaxis_title="Receptions per Transmission", xaxis_title="Config")
@@ -656,10 +680,11 @@ def _plot_reception_efficiency(frame: pd.DataFrame, simulation_label: str):
 
 
 def _plot_counts(frame: pd.DataFrame, simulation_label: str):
-    id_vars = [column for column in ("config", "run") if column in frame.columns]
-    hover_data = ["run"] if "run" in frame.columns else None
+    if frame.empty:
+        return _placeholder_figure(f"TX / RX Packet Counts ({simulation_label})", "No summary data loaded.")
+
     melted = frame.melt(
-        id_vars=id_vars,
+        id_vars=["config"],
         value_vars=["be_tx_count", "be_rx_count", "vo_tx_count", "vo_rx_count"],
         var_name="metric",
         value_name="count",
@@ -678,7 +703,6 @@ def _plot_counts(frame: pd.DataFrame, simulation_label: str):
         y="count",
         color="metric",
         barmode="group",
-        hover_data=hover_data,
         title=f"TX / RX Packet Counts ({simulation_label})",
     )
     fig.update_layout(yaxis_title="Packet Count", xaxis_title="Config")
@@ -686,13 +710,23 @@ def _plot_counts(frame: pd.DataFrame, simulation_label: str):
 
 
 def _plot_tradeoff(frame: pd.DataFrame, simulation_label: str):
+    if frame.empty:
+        return _placeholder_figure(f"Protection vs Cost ({simulation_label})", "No summary data loaded.")
+
     fig = px.scatter(
         frame,
         x="be_delay_p95_ms",
         y="vo_delay_p95_ms",
         size="vo_rx_per_tx",
         color="config",
-        hover_name="run",
+        hover_name="config",
+        hover_data={
+            "be_delay_p95_ms": True,
+            "vo_delay_p95_ms": True,
+            "vo_rx_per_tx": True,
+            "be_delay_ms": True,
+            "vo_delay_ms": True,
+        },
         title=f"Protection vs Cost ({simulation_label})",
     )
     fig.update_layout(
@@ -704,7 +738,10 @@ def _plot_tradeoff(frame: pd.DataFrame, simulation_label: str):
 
 def _plot_delta_tradeoff(comparison_summary: pd.DataFrame, simulation_label: str, baseline_config: str | None):
     if comparison_summary.empty or baseline_config is None:
-        return px.scatter(title="Delta Protection vs Cost (no baseline)")
+        return _placeholder_figure(
+            "Delta Protection vs Cost",
+            "Select a baseline and load summary data to compare high-load configs.",
+        )
 
     fig = px.scatter(
         comparison_summary,
@@ -724,8 +761,6 @@ def _plot_delta_tradeoff(comparison_summary: pd.DataFrame, simulation_label: str
 
 
 def _plot_drop_reasons(frame: pd.DataFrame, simulation_label: str):
-    id_vars = [column for column in ("config", "run") if column in frame.columns]
-    hover_data = ["run"] if "run" in frame.columns else None
     candidate_columns = [
         "mac_drop_sum_count",
         "mac_drop_be_count",
@@ -735,11 +770,11 @@ def _plot_drop_reasons(frame: pd.DataFrame, simulation_label: str):
         "mac_drop_retry_limit_count",
     ]
     available_columns = [column for column in candidate_columns if column in frame.columns]
-    if not available_columns:
-        return px.scatter(title=f"MAC Drop Breakdown ({simulation_label})")
+    if frame.empty or not available_columns:
+        return _placeholder_figure(f"MAC Drop Breakdown ({simulation_label})", "No summary data loaded.")
 
     melted = frame.melt(
-        id_vars=id_vars,
+        id_vars=["config"],
         value_vars=available_columns,
         var_name="metric",
         value_name="count",
@@ -760,7 +795,6 @@ def _plot_drop_reasons(frame: pd.DataFrame, simulation_label: str):
         y="count",
         color="metric",
         barmode="group",
-        hover_data=hover_data,
         title=f"MAC Drop Breakdown ({simulation_label})",
     )
     fig.update_layout(yaxis_title="Drop Count", xaxis_title="Config")
@@ -768,19 +802,17 @@ def _plot_drop_reasons(frame: pd.DataFrame, simulation_label: str):
 
 
 def _plot_drop_rates(frame: pd.DataFrame, simulation_label: str):
-    id_vars = [column for column in ("config", "run") if column in frame.columns]
-    hover_data = ["run"] if "run" in frame.columns else None
     candidate_columns = [
         "mac_drop_per_tx",
         "mac_drop_be_per_be_tx",
         "mac_drop_vo_per_vo_tx",
     ]
     available_columns = [column for column in candidate_columns if column in frame.columns]
-    if not available_columns:
-        return px.scatter(title=f"MAC Drop Rates ({simulation_label})")
+    if frame.empty or not available_columns:
+        return _placeholder_figure(f"MAC Drop Rates ({simulation_label})", "No summary data loaded.")
 
     melted = frame.melt(
-        id_vars=id_vars,
+        id_vars=["config"],
         value_vars=available_columns,
         var_name="metric",
         value_name="drop_rate",
@@ -799,7 +831,6 @@ def _plot_drop_rates(frame: pd.DataFrame, simulation_label: str):
         y="drop_rate",
         color="metric",
         markers=True,
-        hover_data=hover_data,
         title=f"Normalized Drop Rates ({simulation_label})",
     )
     fig.update_layout(yaxis_title="Drops per TX", xaxis_title="Config")
@@ -823,6 +854,10 @@ def _aggregate_timeline(frame: pd.DataFrame) -> pd.DataFrame:
     if not available_columns:
         return pd.DataFrame()
 
+    if "run" not in frame.columns and "source_file" not in frame.columns:
+        selected = ["config", "time_s", *available_columns]
+        return frame[selected].sort_values(["config", "time_s"]).reset_index(drop=True)
+
     return (
         frame.groupby(
             ["config", "time_s"],
@@ -830,13 +865,17 @@ def _aggregate_timeline(frame: pd.DataFrame) -> pd.DataFrame:
         )[available_columns]
         .mean(numeric_only=True)
         .sort_values(["config", "time_s"])
+        .reset_index(drop=True)
     )
 
 
 def _plot_throughput_timeline(frame: pd.DataFrame, simulation_label: str):
     aggregated = _aggregate_timeline(frame)
     if aggregated.empty:
-        return px.scatter(title="Throughput Timeline (no vector data)")
+        return _placeholder_figure(
+            f"Throughput Timeline ({simulation_label})",
+            "Click Load Timelines to read the cached per-second timeline.",
+        )
 
     throughput_columns = []
     for column in ["throughput_kbps", "throughput_be_kbps", "throughput_vo_kbps"]:
@@ -844,7 +883,7 @@ def _plot_throughput_timeline(frame: pd.DataFrame, simulation_label: str):
             throughput_columns.append(column)
 
     if not throughput_columns:
-        return px.scatter(title=f"Throughput Timeline ({simulation_label})")
+        return _placeholder_figure(f"Throughput Timeline ({simulation_label})", "No throughput timeline data available.")
 
     melted = aggregated.melt(
         id_vars=["config", "time_s"],
@@ -879,7 +918,10 @@ def _plot_throughput_timeline(frame: pd.DataFrame, simulation_label: str):
 def _plot_simulation_timeline(frame: pd.DataFrame, simulation_label: str):
     aggregated = _aggregate_timeline(frame)
     if aggregated.empty:
-        return px.scatter(title="State Timeline (no vector data)")
+        return _placeholder_figure(
+            f"State Timeline ({simulation_label})",
+            "Click Load Timelines to read the cached state occupancy timeline.",
+        )
 
     available_metrics = []
     for column in ["active_tx_nodes", "listening_nodes", "blocking_nodes", "sending_nodes"]:
@@ -887,7 +929,7 @@ def _plot_simulation_timeline(frame: pd.DataFrame, simulation_label: str):
             available_metrics.append(column)
 
     if not available_metrics:
-        return px.scatter(title=f"State Timeline ({simulation_label})")
+        return _placeholder_figure(f"State Timeline ({simulation_label})", "No state timeline data available.")
 
     melted = aggregated.melt(
         id_vars=["config", "time_s"],
@@ -914,6 +956,18 @@ def _plot_simulation_timeline(frame: pd.DataFrame, simulation_label: str):
     fig.for_each_annotation(lambda annotation: annotation.update(text=annotation.text.split("=")[-1]))
     fig.update_layout(xaxis_title="Simulation Time (s)", yaxis_title="")
     return fig
+
+
+def _cache_status_text(results_path: Path, cache_info: dict) -> str:
+    cache_state = "cache hit" if cache_info.get("cache_hit") else "cache rebuilt"
+    run_count = int(cache_info.get("run_count", 0))
+    config_count = int(cache_info.get("config_count", 0))
+    timeline_rows = int(cache_info.get("timeline_row_count", 0))
+    cache_dir = cache_info.get("cache_dir", str(results_path / ".kpi_cache"))
+    return (
+        f"Loaded {run_count} run(s) across {config_count} config(s) from {results_path} "
+        f"({cache_state}; cached timelines: {timeline_rows} row(s); cache dir: {cache_dir})"
+    )
 
 
 def build_app(results_dir: Path) -> Dash:
@@ -961,7 +1015,9 @@ def build_app(results_dir: Path) -> Dash:
                 "RX per TX is used instead of delivery ratio because these runs use multicast.",
                 style={"marginBottom": "16px", "color": "#4a5568"},
             ),
-            dcc.Store(id="results-store"),
+            dcc.Store(id="dataset-meta-store"),
+            dcc.Store(id="config-summary-store"),
+            dcc.Store(id="timeline-meta-store"),
             dcc.Store(id="feedback-export-store"),
             html.H3("Config Summary"),
             dash_table.DataTable(
@@ -990,15 +1046,20 @@ def build_app(results_dir: Path) -> Dash:
             ),
             html.H3("Share With AI"),
             html.Div(
-                "Use this snapshot to share your current dashboard data in chat for feedback.",
+                "Generate a JSON snapshot from the cached dataset only when you need to share it.",
                 style={"marginBottom": "8px"},
             ),
             html.Div(
                 [
+                    html.Button(
+                        "Generate Snapshot",
+                        id="generate-feedback-button",
+                        n_clicks=0,
+                    ),
                     dcc.Clipboard(
                         target_id="feedback-snapshot",
                         title="Copy snapshot",
-                        style={"display": "inline-block", "fontSize": 20, "cursor": "pointer"},
+                        style={"display": "inline-block", "fontSize": 20, "cursor": "pointer", "marginLeft": "12px"},
                     ),
                     html.Button(
                         "Download Snapshot JSON",
@@ -1012,6 +1073,7 @@ def build_app(results_dir: Path) -> Dash:
             ),
             dcc.Textarea(
                 id="feedback-snapshot",
+                value=_default_snapshot_text(),
                 readOnly=True,
                 style={
                     "width": "100%",
@@ -1021,6 +1083,17 @@ def build_app(results_dir: Path) -> Dash:
                 },
             ),
             html.H3("Throughput Timeline"),
+            html.Div(
+                [
+                    html.Button("Load Timelines", id="load-timelines-button", n_clicks=0),
+                    html.Div(
+                        id="timeline-status",
+                        children="Timelines load on demand from the cache to keep the dashboard responsive.",
+                        style={"marginTop": "8px", "marginBottom": "8px", "color": "#4a5568"},
+                    ),
+                ],
+                style={"marginBottom": "8px"},
+            ),
             dcc.Graph(id="throughput-timeline-plot"),
             html.H3("State Timeline"),
             dcc.Graph(id="simulation-timeline-plot"),
@@ -1048,7 +1121,9 @@ def build_app(results_dir: Path) -> Dash:
         Output("simulation-label", "children"),
         Output("results-source", "children"),
         Output("status", "children"),
-        Output("results-store", "data"),
+        Output("dataset-meta-store", "data"),
+        Output("config-summary-store", "data"),
+        Output("timeline-meta-store", "data"),
         Output("baseline-select", "options"),
         Output("baseline-select", "value"),
         Input("reload-button", "n_clicks"),
@@ -1059,34 +1134,50 @@ def build_app(results_dir: Path) -> Dash:
         results_path = Path(results_path_raw)
         simulation_label = _infer_simulation_label(results_path)
         try:
-            frame = load_results(results_path)
-            timeline_frame = load_timeseries(results_path, bin_size_s=1.0)
+            dataset = load_dashboard_dataset(results_path, bin_size_s=DEFAULT_TIMELINE_BIN_SIZE_S)
         except Exception as exc:
             status = f"Failed to load results: {exc}"
             return (
                 f"Simulation: {simulation_label}",
                 f"Results source: {results_path}",
                 status,
-                {"rows": [], "timeline_rows": [], "simulation_label": simulation_label},
+                {},
+                {"rows": []},
+                {"available": False},
                 [],
                 None,
             )
 
-        config_values = _ordered_configs(frame["config"].astype(str).unique().tolist())
+        config_summary = dataset["config_summary"]
+        cache_info = dataset["cache_info"]
+        config_values = _baseline_option_values(config_summary)
         baseline_options = [{"label": config, "value": config} for config in config_values]
         baseline_value = current_baseline if current_baseline in set(config_values) else _preferred_baseline(config_values)
-        status = f"Loaded {len(frame)} run(s) across {frame['config'].nunique()} config(s) from {results_path}"
-        store_payload = {
-            "rows": frame.to_dict("records"),
-            "timeline_rows": timeline_frame.to_dict("records"),
+
+        dataset_meta = {
+            "results_path": str(results_path.resolve()),
             "simulation_label": simulation_label,
+            "cache_dir": cache_info.get("cache_dir"),
+            "cache_hit": bool(cache_info.get("cache_hit")),
+            "bin_size_s": float(cache_info.get("bin_size_s", DEFAULT_TIMELINE_BIN_SIZE_S)),
+            "run_count": int(cache_info.get("run_count", 0)),
+            "config_count": int(cache_info.get("config_count", 0)),
+            "timeline_row_count": int(cache_info.get("timeline_row_count", 0)),
+            "built_at_utc": cache_info.get("built_at_utc"),
+        }
+        config_store = {"rows": _records_for_json(config_summary)}
+        timeline_meta = {
+            "available": int(cache_info.get("timeline_row_count", 0)) > 0,
+            "row_count": int(cache_info.get("timeline_row_count", 0)),
         }
 
         return (
             f"Simulation: {simulation_label}",
             f"Results source: {results_path}",
-            status,
-            store_payload,
+            _cache_status_text(results_path, cache_info),
+            dataset_meta,
+            config_store,
+            timeline_meta,
             baseline_options,
             baseline_value,
         )
@@ -1094,12 +1185,8 @@ def build_app(results_dir: Path) -> Dash:
     @app.callback(
         Output("config-summary-table", "data"),
         Output("config-summary-table", "columns"),
-        Output("comparison-table", "data"),
-        Output("comparison-table", "columns"),
         Output("v2x-workload-comparison-table", "data"),
         Output("v2x-workload-comparison-table", "columns"),
-        Output("throughput-timeline-plot", "figure"),
-        Output("simulation-timeline-plot", "figure"),
         Output("latency-profile-plot", "figure"),
         Output("jitter-plot", "figure"),
         Output("reception-plot", "figure"),
@@ -1107,111 +1194,136 @@ def build_app(results_dir: Path) -> Dash:
         Output("drop-reasons-plot", "figure"),
         Output("drop-rates-plot", "figure"),
         Output("tradeoff-plot", "figure"),
-        Output("delta-tradeoff-plot", "figure"),
-        Input("results-store", "data"),
-        Input("baseline-select", "value"),
+        Input("config-summary-store", "data"),
+        Input("dataset-meta-store", "data"),
     )
-    def refresh(payload: dict | None, baseline_config: str | None):
-        if not payload:
-            empty = px.scatter(title="No data")
-            return (
-                [],
-                [],
-                [],
-                [],
-                [],
-                [],
-                empty,
-                empty,
-                empty,
-                empty,
-                empty,
-                empty,
-                empty,
-                empty,
-                empty,
-                empty,
-            )
+    def refresh_static(config_summary_payload: dict | None, dataset_meta: dict | None):
+        simulation_label = (dataset_meta or {}).get("simulation_label", "Custom")
+        config_summary = _frame_from_records((config_summary_payload or {}).get("rows"), CONFIG_SUMMARY_COLUMNS)
+        if config_summary.empty:
+            empty = _placeholder_figure("No data", "Load a scenario to populate the dashboard.")
+            return [], [], [], [], empty, empty, empty, empty, empty, empty, empty
 
-        rows = payload.get("rows", [])
-        simulation_label = payload.get("simulation_label", "Custom")
-        if not rows:
-            empty = px.scatter(title="No data")
-            return (
-                [],
-                [],
-                [],
-                [],
-                [],
-                [],
-                empty,
-                empty,
-                empty,
-                empty,
-                empty,
-                empty,
-                empty,
-                empty,
-                empty,
-                empty,
-            )
-
-        frame = pd.DataFrame(rows)
-        timeline_rows = payload.get("timeline_rows", [])
-        timeline_frame = (
-            pd.DataFrame(timeline_rows)
-            if timeline_rows
-            else pd.DataFrame(
-                columns=[
-                    "config",
-                    "time_s",
-                    "throughput_kbps",
-                    "throughput_be_kbps",
-                    "throughput_vo_kbps",
-                    "active_tx_nodes",
-                    "listening_nodes",
-                    "blocking_nodes",
-                    "sending_nodes",
-                ]
-            )
-        )
-        config_summary = _build_config_summary(frame)
         config_summary_display = _high_load_only_or_all(config_summary)
-        comparison_summary, baseline_used = _build_comparison_summary(config_summary, baseline_config)
         v2x_workload_comparison = _build_v2x_workload_comparison(config_summary)
         config_display = _display_frame(config_summary_display, CONFIG_SUMMARY_TABLE_COLUMNS)
-        comparison_display = _display_frame(comparison_summary, COMPARISON_COLUMNS)
         v2x_workload_display = _display_frame(v2x_workload_comparison, V2X_WORKLOAD_COMPARISON_COLUMNS)
 
         return (
             config_display.to_dict("records"),
             _table_columns(CONFIG_SUMMARY_TABLE_COLUMNS),
-            comparison_display.to_dict("records"),
-            _table_columns(COMPARISON_COLUMNS),
             v2x_workload_display.to_dict("records"),
             _table_columns(V2X_WORKLOAD_COMPARISON_COLUMNS),
+            _plot_latency_profile(config_summary_display, simulation_label),
+            _plot_jitter(config_summary_display, simulation_label),
+            _plot_reception_efficiency(config_summary_display, simulation_label),
+            _plot_counts(config_summary_display, simulation_label),
+            _plot_drop_reasons(config_summary_display, simulation_label),
+            _plot_drop_rates(config_summary_display, simulation_label),
+            _plot_tradeoff(config_summary_display, simulation_label),
+        )
+
+    @app.callback(
+        Output("comparison-table", "data"),
+        Output("comparison-table", "columns"),
+        Output("delta-tradeoff-plot", "figure"),
+        Input("config-summary-store", "data"),
+        Input("dataset-meta-store", "data"),
+        Input("baseline-select", "value"),
+    )
+    def refresh_baseline(config_summary_payload: dict | None, dataset_meta: dict | None, baseline_config: str | None):
+        simulation_label = (dataset_meta or {}).get("simulation_label", "Custom")
+        config_summary = _frame_from_records((config_summary_payload or {}).get("rows"), CONFIG_SUMMARY_COLUMNS)
+        if config_summary.empty:
+            empty = _placeholder_figure("Comparison vs Baseline", "Load a scenario to compare high-load configs.")
+            return [], [], empty
+
+        comparison_summary, baseline_used = _build_comparison_summary(config_summary, baseline_config)
+        comparison_display = _display_frame(comparison_summary, COMPARISON_COLUMNS)
+
+        return (
+            comparison_display.to_dict("records"),
+            _table_columns(COMPARISON_COLUMNS),
+            _plot_delta_tradeoff(comparison_summary, simulation_label, baseline_used),
+        )
+
+    @app.callback(
+        Output("throughput-timeline-plot", "figure"),
+        Output("simulation-timeline-plot", "figure"),
+        Output("timeline-status", "children"),
+        Input("load-timelines-button", "n_clicks"),
+        Input("dataset-meta-store", "data"),
+        Input("timeline-meta-store", "data"),
+    )
+    def refresh_timelines(_n_clicks: int, dataset_meta: dict | None, timeline_meta: dict | None):
+        simulation_label = (dataset_meta or {}).get("simulation_label", "Custom")
+        waiting_throughput = _placeholder_figure(
+            f"Throughput Timeline ({simulation_label})",
+            "Click Load Timelines to read the cached per-second timeline.",
+        )
+        waiting_state = _placeholder_figure(
+            f"State Timeline ({simulation_label})",
+            "Click Load Timelines to read the cached state occupancy timeline.",
+        )
+
+        if not dataset_meta:
+            return waiting_throughput, waiting_state, "Load a scenario before requesting timelines."
+
+        if ctx.triggered_id != "load-timelines-button":
+            return waiting_throughput, waiting_state, "Timelines load on demand from the cache to keep the dashboard responsive."
+
+        if not (timeline_meta or {}).get("available"):
+            return waiting_throughput, waiting_state, "No cached timeline data is available for this scenario."
+
+        try:
+            timeline_frame = load_cached_timeline_rows(
+                Path(dataset_meta["results_path"]),
+                bin_size_s=float(dataset_meta.get("bin_size_s", DEFAULT_TIMELINE_BIN_SIZE_S)),
+            )
+        except Exception as exc:
+            error_fig = _placeholder_figure(
+                f"Throughput Timeline ({simulation_label})",
+                f"Failed to load cached timeline data: {exc}",
+            )
+            return error_fig, waiting_state, f"Failed to load cached timeline data: {exc}"
+
+        return (
             _plot_throughput_timeline(timeline_frame, simulation_label),
             _plot_simulation_timeline(timeline_frame, simulation_label),
-            _plot_latency_profile(config_summary, simulation_label),
-            _plot_jitter(config_summary, simulation_label),
-            _plot_reception_efficiency(config_summary, simulation_label),
-            _plot_counts(config_summary, simulation_label),
-            _plot_drop_reasons(config_summary, simulation_label),
-            _plot_drop_rates(config_summary, simulation_label),
-            _plot_tradeoff(frame, simulation_label),
-            _plot_delta_tradeoff(comparison_summary, simulation_label, baseline_used),
+            f"Loaded {len(timeline_frame)} cached timeline row(s) from {dataset_meta['results_path']}.",
         )
 
     @app.callback(
         Output("feedback-snapshot", "value"),
         Output("feedback-export-store", "data"),
-        Input("results-store", "data"),
+        Input("generate-feedback-button", "n_clicks"),
+        Input("dataset-meta-store", "data"),
+        Input("config-summary-store", "data"),
         Input("baseline-select", "value"),
     )
-    def refresh_feedback_snapshot(payload: dict | None, baseline_config: str | None):
-        snapshot = _build_feedback_snapshot(payload, baseline_config)
-        if not snapshot:
-            return "{}", {}
+    def refresh_feedback_snapshot(
+        _n_clicks: int,
+        dataset_meta: dict | None,
+        config_summary_payload: dict | None,
+        baseline_config: str | None,
+    ):
+        if not dataset_meta:
+            return _default_snapshot_text(), {}
+
+        if ctx.triggered_id != "generate-feedback-button":
+            return _default_snapshot_text(), {}
+
+        config_summary = _frame_from_records((config_summary_payload or {}).get("rows"), CONFIG_SUMMARY_COLUMNS)
+        try:
+            snapshot = _build_feedback_snapshot(
+                Path(dataset_meta["results_path"]),
+                str(dataset_meta.get("simulation_label", "Custom")),
+                config_summary,
+                baseline_config,
+            )
+        except Exception as exc:
+            return f"Failed to generate snapshot: {exc}", {}
+
         return json.dumps(snapshot, indent=2), snapshot
 
     @app.callback(
