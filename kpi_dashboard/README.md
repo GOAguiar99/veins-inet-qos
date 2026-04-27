@@ -72,6 +72,7 @@ python app.py
 Inside the UI:
 - use the `Simulation` dropdown to choose which scenario package to view
 - use the `Baseline config` dropdown to select the comparison reference
+- use each table's `Download CSV` button to export `Config Summary`, `Comparison vs Baseline`, or `V2X Workload Comparison` separately
 - the header shows `Simulation: ...` so it is always clear which package is loaded
 - use `Load Timelines` only when you want the time-series graphs
 - use `Generate Snapshot` before copying or downloading the AI-sharing JSON
@@ -109,6 +110,7 @@ python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations
    - protection-vs-cost scatter (`BE P95 delay` vs `VO P95 delay`, marker size = `VO RX per TX`) using one point per config
    - comparison-vs-baseline table (absolute + percent deltas)
    - delta protection-vs-cost scatter (`BE P95 delta` vs `VO P95 delta`)
+   - `Download CSV` buttons: export each KPI table separately for sharing
    - `Share With AI` section: click `Generate Snapshot`, then copy or download the JSON export
    - timeline charts are lazy-loaded: click `Load Timelines` only when you need throughput/state curves
 
