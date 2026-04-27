@@ -22,13 +22,13 @@ Compatibility aliases are also available:
 1. Start launch daemon:
 
 ```bash
-cd /home/goaguiar/master_veins/veins/bin
+cd /home/goaguiar/master/master_veins/veins/bin
 ./veins_launchd -vv
 ```
 
 2. Run simulation:
 
 ```bash
-cd /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_highway
+cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway
 ./run -u Cmdenv -c edca_v2x
 ```

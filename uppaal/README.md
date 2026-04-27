@@ -22,7 +22,7 @@ UPPAAL here is verification support, not a runtime MAC replacement.
 ## Run
 
 ```bash
-cd /home/goaguiar/master_veins
+cd /home/goaguiar/master/master_veins
 ./uppaal/run_verifyta.sh
 ```
 

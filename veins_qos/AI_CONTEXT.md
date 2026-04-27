@@ -317,7 +317,7 @@ The items below are partly confirmed by the existing code and partly inferred as
 Typical build flow:
 
 ```bash
-cd /home/goaguiar/master_veins/veins_qos
+cd /home/goaguiar/master/master_veins/veins_qos
 make makefiles
 make
 ```
@@ -325,7 +325,7 @@ make
 Typical run flow:
 
 ```bash
-cd /home/goaguiar/master_veins/veins_qos/simulations/veins_inet
+cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet
 ./run -u Cmdenv -c edca_v2x
 ```
 

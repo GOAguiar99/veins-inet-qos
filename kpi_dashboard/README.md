@@ -45,7 +45,7 @@ Use this dashboard to check whether that behavior appears in each run pair.
 From repository root:
 
 ```bash
-cd /home/goaguiar/master_veins
+cd /home/goaguiar/master/master_veins
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r kpi_dashboard/requirements.txt
@@ -63,7 +63,7 @@ Default results directory:
 - `veins_qos/simulations/veins_inet/results`
 
 ```bash
-cd /home/goaguiar/master_veins/kpi_dashboard
+cd /home/goaguiar/master/master_veins/kpi_dashboard
 python app.py
 ```
 
@@ -84,11 +84,11 @@ python app.py --results /absolute/path/to/results
 Examples:
 
 ```bash
-python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_highway_heavy/results
-python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_highway_light/results
-python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_highway/results
-python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_square/results
-python app.py --results /home/goaguiar/master_veins/veins_qos/simulations/veins_inet_light/results
+python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_heavy/results
+python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_light/results
+python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway/results
+python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_square/results
+python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_light/results
 ```
 
 ## Typical Workflow
