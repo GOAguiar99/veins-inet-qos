@@ -276,10 +276,6 @@ def _default_results_dir() -> Path:
     candidates = [
         simulations_dir / "veins_inet_highway_heavy" / "results",
         simulations_dir / "veins_inet_highway_light" / "results",
-        simulations_dir / "veins_inet_highway" / "results",
-        simulations_dir / "veins_inet_square" / "results",
-        simulations_dir / "veins_inet_light" / "results",
-        simulations_dir / "veins_inet" / "results",
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -292,10 +288,6 @@ def _scenario_options() -> list[tuple[str, Path]]:
     return [
         ("Highway Heavy", simulations_dir / "veins_inet_highway_heavy" / "results"),
         ("Highway Light", simulations_dir / "veins_inet_highway_light" / "results"),
-        ("Highway", simulations_dir / "veins_inet_highway" / "results"),
-        ("Square", simulations_dir / "veins_inet_square" / "results"),
-        ("Light", simulations_dir / "veins_inet_light" / "results"),
-        ("Legacy Mixed", simulations_dir / "veins_inet" / "results"),
     ]
 
 
@@ -303,10 +295,6 @@ def _infer_simulation_label(results_dir: Path) -> str:
     mapping = {
         "veins_inet_highway_heavy": "Highway Heavy",
         "veins_inet_highway_light": "Highway Light",
-        "veins_inet_highway": "Highway",
-        "veins_inet_square": "Square",
-        "veins_inet_light": "Light",
-        "veins_inet": "Legacy Mixed",
     }
     parent_name = results_dir.parent.name
     return mapping.get(parent_name, parent_name or "Custom")

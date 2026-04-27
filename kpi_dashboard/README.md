@@ -16,10 +16,10 @@ This dashboard reads OMNeT++ scalar files (`.sca`) and delay vectors (`.vec`) an
 - simulation-time node activity trend (`active TX nodes`)
 - simulation-time V2X FSM state occupancy (`LISTENING`, `BLOCKING`, `SENDING`)
 
-It is designed for fast comparisons such as `plain` vs `edca_v2x` inside one scenario package, or legacy pairs such as `highway_plain` vs `highway_edca_v2x`.
+It is designed for fast comparisons inside the two active highway density-study packages.
 
 The dashboard is scenario-scoped:
-- you select one simulation package at a time (`Highway Heavy`, `Highway Light`, `Highway`, `Square`, `Light`, or legacy mixed)
+- you select one simulation package at a time (`Highway Heavy` or `Highway Light`)
 - the plots and table only show runs from that selected scenario's `results/` folder
 - it is not intended to mix or compare different simulation packages in one view
 
@@ -57,10 +57,6 @@ Default results directory:
 - auto-detects the first existing folder in this order:
 - `veins_qos/simulations/veins_inet_highway_heavy/results`
 - `veins_qos/simulations/veins_inet_highway_light/results`
-- `veins_qos/simulations/veins_inet_highway/results`
-- `veins_qos/simulations/veins_inet_square/results`
-- `veins_qos/simulations/veins_inet_light/results`
-- `veins_qos/simulations/veins_inet/results`
 
 ```bash
 cd /home/goaguiar/master/master_veins/kpi_dashboard
@@ -86,15 +82,12 @@ Examples:
 ```bash
 python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_heavy/results
 python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_light/results
-python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway/results
-python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_square/results
-python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_light/results
 ```
 
 ## Typical Workflow
 
-1. Run baseline config (for example `plain` or `highway_plain`).
-2. Run adaptive config (for example `edca_v2x` or `highway_edca_v2x`) with the same seed.
+1. Run baseline config (for example `plain_netload_medium`).
+2. Run adaptive config (for example `edca_v2x_vo_guarded_netload_medium`) with the same seed.
 3. Open dashboard and compare:
    - confirm the selected `Simulation` label matches the scenario you want
    - select `Baseline config` (usually `plain` or `edca_only`)
@@ -194,3 +187,27 @@ The dashboard shows timeline data in two separate plots:
 This avoids large throughput values visually compressing state-count curves.
 
 If `LISTENING/BLOCKING/SENDING` curves are missing, rerun simulations after rebuilding `veins_qos` so the new `v2xState` signal is recorded into `.vec`.
+
+## Run The Full Matrix
+
+To run the full light-scenario matrix:
+
+```bash
+cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_light
+./run_matrix.sh
+```
+
+To run the full heavy-scenario matrix:
+
+```bash
+cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_heavy
+./run_matrix.sh
+```
+
+Optional environment overrides:
+
+```bash
+RUNS=0..4 UI=Cmdenv EXTRA_ARGS="--sim-time-limit=100s" ./run_matrix.sh
+```
+
+Each scenario-local script executes all `12` configs for that scenario.

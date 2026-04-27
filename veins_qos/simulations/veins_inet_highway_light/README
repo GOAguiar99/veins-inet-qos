@@ -46,3 +46,18 @@ cd /home/goaguiar/master/master_veins/veins/bin
 cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_light
 ./run -u Cmdenv -c edca_v2x_vo_guarded_netload_high
 ```
+
+## Run The Full Light Matrix
+
+```bash
+cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_light
+./run_matrix.sh
+```
+
+Optional overrides:
+
+```bash
+RUNS=0..4 UI=Cmdenv EXTRA_ARGS="--sim-time-limit=100s" ./run_matrix.sh
+```
+
+This runs all `12` configs for the light-density highway scenario.
