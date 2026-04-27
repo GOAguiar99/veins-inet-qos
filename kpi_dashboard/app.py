@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -285,6 +286,28 @@ def _frame_from_records(records: list[dict] | None, columns: list[str]) -> pd.Da
 
 def _default_snapshot_text() -> str:
     return "Click Generate Snapshot to build a shareable JSON export from the cached dataset."
+
+
+def _safe_filename_part(value: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9_-]+", "_", value.strip().lower())
+    return cleaned.strip("_") or "custom"
+
+
+def _human_readable_csv(frame: pd.DataFrame) -> str:
+    readable = frame.rename(columns={column: DISPLAY_LABELS.get(column, column) for column in frame.columns})
+    return readable.to_csv(index=False)
+
+
+def _csv_download(frame: pd.DataFrame, filename: str) -> dict[str, str]:
+    return {
+        "content": _human_readable_csv(frame),
+        "filename": filename,
+        "type": "text/csv",
+    }
+
+
+def _simulation_filename_suffix(dataset_meta: dict | None) -> str:
+    return _safe_filename_part(str((dataset_meta or {}).get("simulation_label", "Custom")))
 
 
 def _placeholder_figure(title: str, message: str):
@@ -1023,21 +1046,42 @@ def build_app(results_dir: Path) -> Dash:
             dcc.Store(id="config-summary-store"),
             dcc.Store(id="timeline-meta-store"),
             dcc.Store(id="feedback-export-store"),
-            html.H3("Config Summary"),
+            html.Div(
+                [
+                    html.H3("Config Summary", style={"margin": 0}),
+                    html.Button("Download CSV", id="download-config-summary-button", n_clicks=0),
+                    dcc.Download(id="download-config-summary-csv"),
+                ],
+                style={"display": "flex", "alignItems": "center", "gap": "12px", "marginBottom": "8px"},
+            ),
             dash_table.DataTable(
                 id="config-summary-table",
                 page_size=20,
                 style_table={"overflowX": "auto"},
                 style_cell={"textAlign": "left", "padding": "6px"},
             ),
-            html.H3("Comparison vs Baseline"),
+            html.Div(
+                [
+                    html.H3("Comparison vs Baseline", style={"margin": 0}),
+                    html.Button("Download CSV", id="download-comparison-button", n_clicks=0),
+                    dcc.Download(id="download-comparison-csv"),
+                ],
+                style={"display": "flex", "alignItems": "center", "gap": "12px", "marginTop": "18px", "marginBottom": "8px"},
+            ),
             dash_table.DataTable(
                 id="comparison-table",
                 page_size=20,
                 style_table={"overflowX": "auto"},
                 style_cell={"textAlign": "left", "padding": "6px"},
             ),
-            html.H3("V2X Workload Comparison"),
+            html.Div(
+                [
+                    html.H3("V2X Workload Comparison", style={"margin": 0}),
+                    html.Button("Download CSV", id="download-v2x-workload-button", n_clicks=0),
+                    dcc.Download(id="download-v2x-workload-csv"),
+                ],
+                style={"display": "flex", "alignItems": "center", "gap": "12px", "marginTop": "18px", "marginBottom": "8px"},
+            ),
             html.Div(
                 "Compares only the EDCA V2X variants in a workload matrix: each row is one KPI, and each load shows Stable, Guarded, and Delta (Guarded - Stable) side by side.",
                 style={"marginBottom": "8px", "color": "#4a5568"},
@@ -1250,6 +1294,53 @@ def build_app(results_dir: Path) -> Dash:
             _table_columns(COMPARISON_COLUMNS),
             _plot_delta_tradeoff(comparison_summary, simulation_label, baseline_used),
         )
+
+    @app.callback(
+        Output("download-config-summary-csv", "data"),
+        Input("download-config-summary-button", "n_clicks"),
+        State("dataset-meta-store", "data"),
+        State("config-summary-store", "data"),
+        prevent_initial_call=True,
+    )
+    def download_config_summary(_n_clicks: int, dataset_meta: dict | None, config_summary_payload: dict | None):
+        suffix = _simulation_filename_suffix(dataset_meta)
+        config_summary = _frame_from_records((config_summary_payload or {}).get("rows"), CONFIG_SUMMARY_COLUMNS)
+        config_display = _display_frame(_high_load_only_or_all(config_summary), CONFIG_SUMMARY_TABLE_COLUMNS)
+        return _csv_download(config_display, f"config_summary_{suffix}.csv")
+
+    @app.callback(
+        Output("download-comparison-csv", "data"),
+        Input("download-comparison-button", "n_clicks"),
+        State("dataset-meta-store", "data"),
+        State("config-summary-store", "data"),
+        State("baseline-select", "value"),
+        prevent_initial_call=True,
+    )
+    def download_comparison(
+        _n_clicks: int,
+        dataset_meta: dict | None,
+        config_summary_payload: dict | None,
+        baseline_config: str | None,
+    ):
+        suffix = _simulation_filename_suffix(dataset_meta)
+        config_summary = _frame_from_records((config_summary_payload or {}).get("rows"), CONFIG_SUMMARY_COLUMNS)
+        comparison_summary, _baseline_used = _build_comparison_summary(config_summary, baseline_config)
+        comparison_display = _display_frame(comparison_summary, COMPARISON_COLUMNS)
+        return _csv_download(comparison_display, f"comparison_vs_baseline_{suffix}.csv")
+
+    @app.callback(
+        Output("download-v2x-workload-csv", "data"),
+        Input("download-v2x-workload-button", "n_clicks"),
+        State("dataset-meta-store", "data"),
+        State("config-summary-store", "data"),
+        prevent_initial_call=True,
+    )
+    def download_v2x_workload(_n_clicks: int, dataset_meta: dict | None, config_summary_payload: dict | None):
+        suffix = _simulation_filename_suffix(dataset_meta)
+        config_summary = _frame_from_records((config_summary_payload or {}).get("rows"), CONFIG_SUMMARY_COLUMNS)
+        v2x_workload_comparison = _build_v2x_workload_comparison(config_summary)
+        v2x_workload_display = _display_frame(v2x_workload_comparison, V2X_WORKLOAD_COMPARISON_COLUMNS)
+        return _csv_download(v2x_workload_display, f"v2x_workload_comparison_{suffix}.csv")
 
     @app.callback(
         Output("throughput-timeline-plot", "figure"),
