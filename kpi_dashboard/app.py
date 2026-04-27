@@ -554,6 +554,8 @@ def _build_v2x_workload_comparison(config_summary: pd.DataFrame) -> pd.DataFrame
         entry[f"{variant}_be_jitter_ms"] = row["be_jitter_ms"]
         entry[f"{variant}_be_rx_per_tx"] = row["be_rx_per_tx"]
         entry[f"{variant}_mac_drop_sum_count"] = row["mac_drop_sum_count"]
+        entry[f"{variant}_mac_drop_be_count"] = row["mac_drop_be_count"]
+        entry[f"{variant}_mac_drop_vo_count"] = row["mac_drop_vo_count"]
         entry[f"{variant}_mac_drop_per_tx"] = row["mac_drop_per_tx"]
 
     if not rows_by_workload:
@@ -570,6 +572,8 @@ def _build_v2x_workload_comparison(config_summary: pd.DataFrame) -> pd.DataFrame
         ("BE Jitter (ms)", "be_jitter_ms"),
         ("BE RX per TX", "be_rx_per_tx"),
         ("MAC Total Drops", "mac_drop_sum_count"),
+        ("MAC BE Drops", "mac_drop_be_count"),
+        ("MAC VO Drops", "mac_drop_vo_count"),
         ("MAC Drops per TX", "mac_drop_per_tx"),
     ]
 
@@ -1040,7 +1044,7 @@ def build_app(results_dir: Path) -> Dash:
             ),
             dash_table.DataTable(
                 id="v2x-workload-comparison-table",
-                page_size=10,
+                page_size=14,
                 style_table={"overflowX": "auto"},
                 style_cell={"textAlign": "left", "padding": "6px"},
             ),
