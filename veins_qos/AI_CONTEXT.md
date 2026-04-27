@@ -86,6 +86,18 @@ The current experiment logic is:
   - it starts sending periodic VO-marked traffic
 - After the configured resume interval, the vehicle resumes movement and the crash VO stream stops.
 
+The newer highway-density study now separates two dimensions cleanly:
+
+- vehicle density is chosen by scenario package:
+  - `simulations/veins_inet_highway_light/`
+  - `simulations/veins_inet_highway_heavy/`
+- network load is chosen by config suffix inside those packages:
+  - `_netload_low`
+  - `_netload_medium`
+  - `_netload_high`
+
+This separation is deliberate so traffic density and channel load can be stressed independently.
+
 In the default `omnetpp.ini`:
 - simulation time is `100s`
 - normal traffic uses `exponential(1s)` intervals and `100` byte payloads
@@ -198,6 +210,30 @@ Files:
 - `square/` (launch, SUMO config, network, routes, obstacles)
 - `highway/` (launch, SUMO config, network, routes, obstacles)
 
+### Highway density study
+
+Files:
+
+- `simulations/veins_inet_highway_light/`
+- `simulations/veins_inet_highway_heavy/`
+
+These two packages keep the same highway corridor but change only the SUMO vehicle count:
+
+- `veins_inet_highway_light`: `10` total vehicles
+- `veins_inet_highway_heavy`: `100` total vehicles
+
+Inside each package, application-side network load is exposed as explicit config suffixes:
+
+- `_netload_low`
+- `_netload_medium`
+- `_netload_high`
+
+For the density-study highway packages, the current load profiles are:
+
+- `low`: BE `exponential(1s)` with `120` byte payload; crash VO `150ms`, `repeatCount=2`
+- `medium`: BE `exponential(500ms)` with `200` byte payload; crash VO `100ms`, `repeatCount=3`
+- `high`: BE `exponential(250ms)` with `320` byte payload; crash VO `75ms`, `repeatCount=4`
+
 ### Configs in `omnetpp.ini`
 
 `plain`
@@ -250,6 +286,7 @@ These are the parameters most likely to matter in future thesis iterations:
 
 - traffic load from `CritPacketSender`
 - crash traffic interval and duration from `CrashBurstApp`
+- explicit network-load profile (`_netload_low`, `_netload_medium`, `_netload_high`) in the highway density-study packages
 - choice of crash source node or number of simultaneous crash sources
 - queue capacities in DCF or per EDCA access category
 - AIFSN and CW values in the tuned EDCA configuration

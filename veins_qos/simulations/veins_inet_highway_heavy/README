@@ -1,0 +1,48 @@
+Veins+INET highway scenario with high vehicle density for the `veins_qos` study.
+
+## What This Scenario Changes
+
+- SUMO mobility stays in the highway corridor.
+- Vehicle density is heavy: `100` total vehicles (`node0` plus `99` background vehicles).
+- Network load is selected independently through OMNeT++ config names.
+
+## Active MAC Configs
+
+- `plain`
+- `edca_only`
+- `edca_v2x_vo_stable`
+- `edca_v2x_vo_guarded`
+
+The no-suffix configs keep the historical medium application load.
+
+## Network Load Profiles
+
+Runnable config variants are available with `_netload_low`, `_netload_medium`, and `_netload_high` suffixes.
+
+Load profiles only change application traffic:
+
+- `low`: BE `exponential(1s)` with `120B`; crash VO `150ms`, `repeatCount=2`
+- `medium`: BE `exponential(500ms)` with `200B`; crash VO `100ms`, `repeatCount=3`
+- `high`: BE `exponential(250ms)` with `320B`; crash VO `75ms`, `repeatCount=4`
+
+Examples:
+
+- `plain_netload_low`
+- `edca_only_netload_medium`
+- `edca_v2x_vo_guarded_netload_high`
+
+## How To Run
+
+1. Start launch daemon:
+
+```bash
+cd /home/goaguiar/master/master_veins/veins/bin
+./veins_launchd -vv
+```
+
+2. Run a simulation:
+
+```bash
+cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_heavy
+./run -u Cmdenv -c edca_v2x_vo_guarded_netload_high
+```

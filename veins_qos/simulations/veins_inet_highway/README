@@ -17,6 +17,23 @@ Compatibility aliases are also available:
 - `highway_edca_only`
 - `highway_edca_v2x`
 
+## Density And Load Matrix
+
+For the newer two-axis highway study, use these scenario packages instead:
+
+- `veins_inet_highway_light`: low vehicle density (`10` total vehicles)
+- `veins_inet_highway_heavy`: high vehicle density (`100` total vehicles)
+
+Inside each of those packages, network load is varied independently with config suffixes:
+
+- `_netload_low`
+- `_netload_medium`
+- `_netload_high`
+
+Example runnable config:
+
+- `edca_v2x_vo_guarded_netload_high`
+
 ## How To Run
 
 1. Start launch daemon:
