@@ -89,6 +89,19 @@ COMPARISON_COLUMNS = [
     "mac_drop_per_tx_delta",
 ]
 
+V2X_WORKLOAD_COMPARISON_COLUMNS = [
+    "metric",
+    "low_stable",
+    "low_guarded",
+    "low_delta",
+    "medium_stable",
+    "medium_guarded",
+    "medium_delta",
+    "high_stable",
+    "high_guarded",
+    "high_delta",
+]
+
 LATENCY_PROFILE_LABELS = {
     "be_delay_min_ms": ("BE", "Min"),
     "be_delay_ms": ("BE", "Mean"),
@@ -146,6 +159,16 @@ DISPLAY_LABELS = {
     "mac_drop_vo_delta_count": "MAC VO Drop Delta (count)",
     "mac_drop_unclassified_delta_count": "MAC Unclassified Drop Delta (count)",
     "mac_drop_per_tx_delta": "MAC Drops per App TX Delta",
+    "metric": "Metric",
+    "low_stable": "Low Stable",
+    "low_guarded": "Low Guarded",
+    "low_delta": "Low Delta",
+    "medium_stable": "Medium Stable",
+    "medium_guarded": "Medium Guarded",
+    "medium_delta": "Medium Delta",
+    "high_stable": "High Stable",
+    "high_guarded": "High Guarded",
+    "high_delta": "High Delta",
 }
 
 ROUND_COLUMNS = [
@@ -179,6 +202,15 @@ ROUND_COLUMNS = [
     "mac_drop_vo_delta_count",
     "mac_drop_unclassified_delta_count",
     "mac_drop_per_tx_delta",
+    "low_stable",
+    "low_guarded",
+    "low_delta",
+    "medium_stable",
+    "medium_guarded",
+    "medium_delta",
+    "high_stable",
+    "high_guarded",
+    "high_delta",
 ]
 
 RUN_EXPORT_COLUMNS = [
@@ -232,7 +264,9 @@ def _build_feedback_snapshot(payload: dict | None, baseline_config: str | None) 
     frame = pd.DataFrame(rows)
     timeline_frame = pd.DataFrame(timeline_rows) if timeline_rows else pd.DataFrame()
     config_summary = _build_config_summary(frame)
+    config_summary_display = _high_load_only_or_all(config_summary)
     comparison_summary, baseline_used = _build_comparison_summary(config_summary, baseline_config)
+    v2x_workload_comparison = _build_v2x_workload_comparison(config_summary)
     config_list = _ordered_configs(frame["config"].astype(str).unique().tolist())
     run_columns = [column for column in ("config", "run", "source_file") if column in frame.columns]
     run_columns += [column for column in frame.columns if column not in set(run_columns)]
@@ -263,9 +297,11 @@ def _build_feedback_snapshot(payload: dict | None, baseline_config: str | None) 
         "run_level_columns": run_columns,
         "run_level_metrics": _records_for_json(run_level),
         "config_summary_columns": CONFIG_SUMMARY_COLUMNS,
-        "config_summary": _records_for_json(_display_frame(config_summary, CONFIG_SUMMARY_COLUMNS)),
+        "config_summary": _records_for_json(_display_frame(config_summary_display, CONFIG_SUMMARY_COLUMNS)),
         "comparison_columns": COMPARISON_COLUMNS,
         "comparison_vs_baseline": _records_for_json(_display_frame(comparison_summary, COMPARISON_COLUMNS)),
+        "v2x_workload_comparison_columns": V2X_WORKLOAD_COMPARISON_COLUMNS,
+        "v2x_workload_comparison": _records_for_json(_display_frame(v2x_workload_comparison, V2X_WORKLOAD_COMPARISON_COLUMNS)),
         "timeline_columns": timeline_columns,
         "timeline_metrics": _records_for_json(timeline_level),
     }
@@ -363,6 +399,17 @@ def _preferred_baseline(configs: list[str]) -> str | None:
     return ordered[0] if ordered else None
 
 
+def _is_high_load_config(config: str) -> bool:
+    return config.endswith("_netload_high")
+
+
+def _high_load_only_or_all(config_summary: pd.DataFrame) -> pd.DataFrame:
+    if config_summary.empty:
+        return config_summary
+    high_load_summary = config_summary[config_summary["config"].astype(str).map(_is_high_load_config)].copy()
+    return high_load_summary if not high_load_summary.empty else config_summary
+
+
 def _safe_pct_delta(value: float, baseline_value: float) -> float:
     if math.isnan(value) or math.isnan(baseline_value) or baseline_value == 0:
         return math.nan
@@ -390,18 +437,20 @@ def _build_comparison_summary(config_summary: pd.DataFrame, baseline_config: str
     if config_summary.empty:
         return pd.DataFrame(columns=COMPARISON_COLUMNS), None
 
-    config_values = config_summary["config"].astype(str).tolist()
+    comparison_source = _high_load_only_or_all(config_summary)
+
+    config_values = comparison_source["config"].astype(str).tolist()
     baseline = baseline_config if baseline_config in set(config_values) else _preferred_baseline(config_values)
     if baseline is None:
         return pd.DataFrame(columns=COMPARISON_COLUMNS), None
 
-    baseline_row = config_summary.loc[config_summary["config"] == baseline]
+    baseline_row = comparison_source.loc[comparison_source["config"] == baseline]
     if baseline_row.empty:
         return pd.DataFrame(columns=COMPARISON_COLUMNS), None
     base = baseline_row.iloc[0]
 
     rows: list[dict[str, float | str]] = []
-    for _, row in config_summary.iterrows():
+    for _, row in comparison_source.iterrows():
         comparison_row: dict[str, float | str] = {
             "config": str(row["config"]),
             "runs": int(row["runs"]),
@@ -430,6 +479,97 @@ def _build_comparison_summary(config_summary: pd.DataFrame, baseline_config: str
     comparison = comparison.sort_values("config").reset_index(drop=True)
     comparison["config"] = comparison["config"].astype(str)
     return comparison[COMPARISON_COLUMNS], baseline
+
+
+def _workload_sort_key(workload: str) -> tuple[int, str]:
+    order = {"low": 0, "medium": 1, "high": 2}
+    return (order.get(workload, 99), workload)
+
+
+def _extract_v2x_variant_and_workload(config: str) -> tuple[str | None, str | None]:
+    prefix = "edca_v2x_vo_"
+    marker = "_netload_"
+    if not config.startswith(prefix) or marker not in config:
+        return None, None
+
+    variant_and_suffix = config[len(prefix):]
+    variant, workload = variant_and_suffix.split(marker, 1)
+    if variant not in {"stable", "guarded"}:
+        return None, None
+    return variant, workload
+
+
+def _build_v2x_workload_comparison(config_summary: pd.DataFrame) -> pd.DataFrame:
+    if config_summary.empty:
+        return pd.DataFrame(columns=V2X_WORKLOAD_COMPARISON_COLUMNS)
+
+    rows_by_workload: dict[str, dict[str, float | int | str]] = {}
+
+    for _, row in config_summary.iterrows():
+        config = str(row["config"])
+        variant, workload = _extract_v2x_variant_and_workload(config)
+        if variant is None or workload is None:
+            continue
+
+        entry = rows_by_workload.setdefault(
+            workload,
+            {
+                "workload": workload,
+                "stable_runs": math.nan,
+                "guarded_runs": math.nan,
+            },
+        )
+
+        entry[f"{variant}_runs"] = int(row["runs"])
+        entry[f"{variant}_vo_delay_p95_ms"] = row["vo_delay_p95_ms"]
+        entry[f"{variant}_vo_delay_ms"] = row["vo_delay_ms"]
+        entry[f"{variant}_vo_jitter_ms"] = row["vo_jitter_ms"]
+        entry[f"{variant}_vo_rx_per_tx"] = row["vo_rx_per_tx"]
+        entry[f"{variant}_be_delay_p95_ms"] = row["be_delay_p95_ms"]
+        entry[f"{variant}_be_delay_ms"] = row["be_delay_ms"]
+        entry[f"{variant}_be_jitter_ms"] = row["be_jitter_ms"]
+        entry[f"{variant}_be_rx_per_tx"] = row["be_rx_per_tx"]
+        entry[f"{variant}_mac_drop_sum_count"] = row["mac_drop_sum_count"]
+        entry[f"{variant}_mac_drop_per_tx"] = row["mac_drop_per_tx"]
+
+    if not rows_by_workload:
+        return pd.DataFrame(columns=V2X_WORKLOAD_COMPARISON_COLUMNS)
+
+    metric_definitions = [
+        ("Runs", "runs"),
+        ("VO P95 Delay (ms)", "vo_delay_p95_ms"),
+        ("VO Mean Delay (ms)", "vo_delay_ms"),
+        ("VO Jitter (ms)", "vo_jitter_ms"),
+        ("VO RX per TX", "vo_rx_per_tx"),
+        ("BE P95 Delay (ms)", "be_delay_p95_ms"),
+        ("BE Mean Delay (ms)", "be_delay_ms"),
+        ("BE Jitter (ms)", "be_jitter_ms"),
+        ("BE RX per TX", "be_rx_per_tx"),
+        ("MAC Total Drops", "mac_drop_sum_count"),
+        ("MAC Drops per TX", "mac_drop_per_tx"),
+    ]
+
+    matrix_rows: list[dict[str, float | int | str]] = []
+    ordered_workloads = [workload for workload in ["low", "medium", "high"] if workload in rows_by_workload]
+
+    for metric_label, metric_key in metric_definitions:
+        row: dict[str, float | int | str] = {"metric": metric_label}
+        for workload in ordered_workloads:
+            workload_entry = rows_by_workload[workload]
+            stable_key = f"stable_{metric_key}"
+            guarded_key = f"guarded_{metric_key}"
+            stable_value = workload_entry.get(stable_key, math.nan)
+            guarded_value = workload_entry.get(guarded_key, math.nan)
+            delta_value = math.nan
+            if metric_key != "runs" and pd.notna(guarded_value) and pd.notna(stable_value):
+                delta_value = guarded_value - stable_value
+            row[f"{workload}_stable"] = stable_value
+            row[f"{workload}_guarded"] = guarded_value
+            row[f"{workload}_delta"] = delta_value
+        matrix_rows.append(row)
+
+    comparison = pd.DataFrame(matrix_rows)
+    return comparison.reindex(columns=V2X_WORKLOAD_COMPARISON_COLUMNS)
 
 
 def _plot_latency_profile(frame: pd.DataFrame, simulation_label: str):
@@ -837,6 +977,17 @@ def build_app(results_dir: Path) -> Dash:
                 style_table={"overflowX": "auto"},
                 style_cell={"textAlign": "left", "padding": "6px"},
             ),
+            html.H3("V2X Workload Comparison"),
+            html.Div(
+                "Compares only the EDCA V2X variants in a workload matrix: each row is one KPI, and each load shows Stable, Guarded, and Delta (Guarded - Stable) side by side.",
+                style={"marginBottom": "8px", "color": "#4a5568"},
+            ),
+            dash_table.DataTable(
+                id="v2x-workload-comparison-table",
+                page_size=10,
+                style_table={"overflowX": "auto"},
+                style_cell={"textAlign": "left", "padding": "6px"},
+            ),
             html.H3("Share With AI"),
             html.Div(
                 "Use this snapshot to share your current dashboard data in chat for feedback.",
@@ -945,6 +1096,8 @@ def build_app(results_dir: Path) -> Dash:
         Output("config-summary-table", "columns"),
         Output("comparison-table", "data"),
         Output("comparison-table", "columns"),
+        Output("v2x-workload-comparison-table", "data"),
+        Output("v2x-workload-comparison-table", "columns"),
         Output("throughput-timeline-plot", "figure"),
         Output("simulation-timeline-plot", "figure"),
         Output("latency-profile-plot", "figure"),
@@ -966,6 +1119,8 @@ def build_app(results_dir: Path) -> Dash:
                 [],
                 [],
                 [],
+                [],
+                [],
                 empty,
                 empty,
                 empty,
@@ -983,6 +1138,8 @@ def build_app(results_dir: Path) -> Dash:
         if not rows:
             empty = px.scatter(title="No data")
             return (
+                [],
+                [],
                 [],
                 [],
                 [],
@@ -1019,15 +1176,20 @@ def build_app(results_dir: Path) -> Dash:
             )
         )
         config_summary = _build_config_summary(frame)
+        config_summary_display = _high_load_only_or_all(config_summary)
         comparison_summary, baseline_used = _build_comparison_summary(config_summary, baseline_config)
-        config_display = _display_frame(config_summary, CONFIG_SUMMARY_TABLE_COLUMNS)
+        v2x_workload_comparison = _build_v2x_workload_comparison(config_summary)
+        config_display = _display_frame(config_summary_display, CONFIG_SUMMARY_TABLE_COLUMNS)
         comparison_display = _display_frame(comparison_summary, COMPARISON_COLUMNS)
+        v2x_workload_display = _display_frame(v2x_workload_comparison, V2X_WORKLOAD_COMPARISON_COLUMNS)
 
         return (
             config_display.to_dict("records"),
             _table_columns(CONFIG_SUMMARY_TABLE_COLUMNS),
             comparison_display.to_dict("records"),
             _table_columns(COMPARISON_COLUMNS),
+            v2x_workload_display.to_dict("records"),
+            _table_columns(V2X_WORKLOAD_COMPARISON_COLUMNS),
             _plot_throughput_timeline(timeline_frame, simulation_label),
             _plot_simulation_timeline(timeline_frame, simulation_label),
             _plot_latency_profile(config_summary, simulation_label),
