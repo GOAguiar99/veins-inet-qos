@@ -13,17 +13,17 @@ Veins+INET highway scenario with low vehicle density for the `veins_qos` study.
 - `edca_v2x_vo_stable`
 - `edca_v2x_vo_guarded`
 
-The no-suffix configs keep the historical medium application load.
+The no-suffix configs use the deterministic medium application load.
 
 ## Network Load Profiles
 
 Runnable config variants are available with `_netload_low`, `_netload_medium`, and `_netload_high` suffixes.
 
-Load profiles only change application traffic:
+Load profiles only change application traffic. BE intervals are deterministic so all MAC configs see the same offered load for each profile.
 
-- `low`: BE `exponential(1s)` with `120B`; crash VO `150ms`, `repeatCount=2`
-- `medium`: BE `exponential(500ms)` with `200B`; crash VO `100ms`, `repeatCount=3`
-- `high`: BE `exponential(250ms)` with `320B`; crash VO `75ms`, `repeatCount=4`
+- `low`: BE `500ms` with `200B`; crash VO `120ms`, `150B`, `repeatCount=3`
+- `medium`: BE `250ms` with `320B`; crash VO `75ms`, `180B`, `repeatCount=4`
+- `high`: BE `125ms` with `420B`; crash VO `50ms`, `220B`, `repeatCount=5`
 
 Examples:
 
