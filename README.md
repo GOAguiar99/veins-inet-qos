@@ -49,6 +49,42 @@ Current active highway-density study structure:
   - `edca_v2x_vo_stable_netload_<low|medium|high>`
   - `edca_v2x_vo_guarded_netload_<low|medium|high>`
 
+## Quick Experiment Tutorial
+
+Start the Veins launch daemon in one terminal:
+
+```bash
+cd /home/goaguiar/master/master_veins/veins/bin
+./veins_launchd -vv
+```
+
+Run the full light-density matrix with 10 repeated seeds:
+
+```bash
+cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_light
+RUNS=0..9 UI=Cmdenv EXTRA_ARGS="--repeat=10" ./run_matrix.sh
+```
+
+Run the lean heavy-density stress matrix with 5 repeated seeds:
+
+```bash
+cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_heavy
+RUNS=0..4 UI=Cmdenv EXTRA_ARGS="--repeat=5" ./run_matrix.sh
+```
+
+`RUNS` selects which run indexes to execute, while `--repeat=N` tells OMNeT++ how many repetitions exist. Keep them consistent, for example `RUNS=0..4` with `--repeat=5` or `RUNS=0..9` with `--repeat=10`.
+
+Before starting a new batch, archive or clear old `results/` files from incompatible traffic profiles so the dashboard does not average old and new experiments together.
+
+Open the KPI dashboard after simulations finish:
+
+```bash
+cd /home/goaguiar/master/master_veins/kpi_dashboard
+python app.py
+```
+
+Then open `http://127.0.0.1:8050`. The light runner defaults to all 12 load/config combinations; the heavy runner defaults to the four high-load stress configs to save disk and runtime.
+
 ## Core Implementation Areas (`veins_qos/src`)
 
 - `traffic/`: application-layer traffic generators for BE and crash-triggered VO flows.

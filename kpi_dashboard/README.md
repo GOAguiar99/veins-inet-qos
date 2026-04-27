@@ -216,35 +216,10 @@ These timeline plots are loaded lazily from `timeline_rows_1s.json.gz` when you 
 
 If `LISTENING/BLOCKING/SENDING` curves are missing, rerun simulations after rebuilding `veins_qos` so the new `v2xState` signal is recorded into `.vec`.
 
-## Run The Full Matrix
+## Run Simulations
 
-To run the full light-scenario matrix:
+Simulation-run commands live in the repository-level README:
 
-```bash
-cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_light
-./run_matrix.sh
-```
+- [`../README.md`](../README.md)
 
-To run the full heavy-scenario matrix:
-
-```bash
-cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_heavy
-./run_matrix.sh
-```
-
-Optional environment overrides:
-
-```bash
-RUNS=0..4 UI=Cmdenv EXTRA_ARGS="--sim-time-limit=100s" ./run_matrix.sh
-```
-
-Each scenario-local script executes `8` configs for that scenario:
-
-- `plain_netload_high`
-- `edca_only_netload_high`
-- `edca_v2x_vo_stable_netload_low`
-- `edca_v2x_vo_stable_netload_medium`
-- `edca_v2x_vo_stable_netload_high`
-- `edca_v2x_vo_guarded_netload_low`
-- `edca_v2x_vo_guarded_netload_medium`
-- `edca_v2x_vo_guarded_netload_high`
+Keep this dashboard README focused on loading result folders, interpreting KPIs, and exporting dashboard data.
