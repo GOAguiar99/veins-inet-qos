@@ -94,11 +94,11 @@ python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations
 
 ## Typical Workflow
 
-1. Run baseline config (for example `plain_netload_medium`).
-2. Run adaptive config (for example `edca_v2x_vo_guarded_netload_medium`) with the same seed.
+1. Run baseline config (for example `plain_netload_high`).
+2. Run adaptive config (for example `edca_v2x_vo_guarded_netload_high`) with the same seed.
 3. Open dashboard and compare:
    - confirm the selected `Simulation` label matches the scenario you want
-   - select `Baseline config` (usually `plain` or `edca_only`)
+   - select `Baseline config` from the available high-load options (usually `plain_netload_high` or `edca_only_netload_high`)
    - config summary table (single main table)
    - latency profile chart (`min`, `mean`, `P95`, `max`)
    - jitter chart
@@ -109,13 +109,8 @@ python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations
    - protection-vs-cost scatter (`BE P95 delay` vs `VO P95 delay`, marker size = `VO RX per TX`) using one point per config
    - comparison-vs-baseline table (absolute + percent deltas)
    - delta protection-vs-cost scatter (`BE P95 delta` vs `VO P95 delta`)
-   - `Share With AI` section:
-   - click `Generate Snapshot`
-   - then click the copy icon to copy a JSON snapshot
-   - or click `Download Snapshot JSON`
-   - paste the snapshot in chat for feedback
-   - timeline charts are lazy-loaded:
-   - click `Load Timelines` only when you need throughput/state curves
+   - `Share With AI` section: click `Generate Snapshot`, then copy or download the JSON export
+   - timeline charts are lazy-loaded: click `Load Timelines` only when you need throughput/state curves
 
 ## Share Snapshot With AI
 
@@ -241,4 +236,13 @@ Optional environment overrides:
 RUNS=0..4 UI=Cmdenv EXTRA_ARGS="--sim-time-limit=100s" ./run_matrix.sh
 ```
 
-Each scenario-local script executes all `12` configs for that scenario.
+Each scenario-local script executes `8` configs for that scenario:
+
+- `plain_netload_high`
+- `edca_only_netload_high`
+- `edca_v2x_vo_stable_netload_low`
+- `edca_v2x_vo_stable_netload_medium`
+- `edca_v2x_vo_stable_netload_high`
+- `edca_v2x_vo_guarded_netload_low`
+- `edca_v2x_vo_guarded_netload_medium`
+- `edca_v2x_vo_guarded_netload_high`

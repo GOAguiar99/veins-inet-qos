@@ -30,17 +30,24 @@ This workspace intentionally keeps a minimal two-class design (BE vs VO) to pres
 
 Simulation packages live under `veins_qos/simulations/`:
 
-- [`veins_qos/simulations/veins_inet_square/`](veins_qos/simulations/veins_inet_square/)
-- [`veins_qos/simulations/veins_inet_highway/`](veins_qos/simulations/veins_inet_highway/)
-- [`veins_qos/simulations/veins_inet_light/`](veins_qos/simulations/veins_inet_light/)
+- Active density-study packages:
+  - [`veins_qos/simulations/veins_inet_highway_light/`](veins_qos/simulations/veins_inet_highway_light/)
+  - [`veins_qos/simulations/veins_inet_highway_heavy/`](veins_qos/simulations/veins_inet_highway_heavy/)
+- Legacy or supporting packages still present in the tree:
+  - [`veins_qos/simulations/veins_inet_square/`](veins_qos/simulations/veins_inet_square/)
+  - [`veins_qos/simulations/veins_inet_highway/`](veins_qos/simulations/veins_inet_highway/)
+  - [`veins_qos/simulations/veins_inet_light/`](veins_qos/simulations/veins_inet_light/)
 
-Current configuration profiles in each package `omnetpp.ini`:
+Current active highway-density study structure:
 
-- `plain`
-- `edca_only`
-- `edca_v2x`
-- `edca_v2x_be_friendly`
-- `edca_v2x_vo_protect`
+- scenario package selects vehicle density:
+  - `veins_inet_highway_light`
+  - `veins_inet_highway_heavy`
+- config name selects MAC policy and load profile:
+  - `plain_netload_<low|medium|high>`
+  - `edca_only_netload_<low|medium|high>`
+  - `edca_v2x_vo_stable_netload_<low|medium|high>`
+  - `edca_v2x_vo_guarded_netload_<low|medium|high>`
 
 ## Core Implementation Areas (`veins_qos/src`)
 
@@ -64,9 +71,11 @@ Primary analysis dimensions:
 - Project context and guardrails: [`veins_qos/AI_CONTEXT.md`](veins_qos/AI_CONTEXT.md)
 - KPI dashboard details: [`kpi_dashboard/README.md`](kpi_dashboard/README.md)
 - Formal model workflow: [`uppaal/README.md`](uppaal/README.md)
-- Square scenario notes: [`veins_qos/simulations/veins_inet_square/README`](veins_qos/simulations/veins_inet_square/README)
-- Highway scenario notes: [`veins_qos/simulations/veins_inet_highway/README`](veins_qos/simulations/veins_inet_highway/README)
-- Light scenario notes: [`veins_qos/simulations/veins_inet_light/README`](veins_qos/simulations/veins_inet_light/README)
+- Highway light notes: [`veins_qos/simulations/veins_inet_highway_light/README`](veins_qos/simulations/veins_inet_highway_light/README)
+- Highway heavy notes: [`veins_qos/simulations/veins_inet_highway_heavy/README`](veins_qos/simulations/veins_inet_highway_heavy/README)
+- Legacy square scenario notes: [`veins_qos/simulations/veins_inet_square/README`](veins_qos/simulations/veins_inet_square/README)
+- Legacy highway scenario notes: [`veins_qos/simulations/veins_inet_highway/README`](veins_qos/simulations/veins_inet_highway/README)
+- Legacy light scenario notes: [`veins_qos/simulations/veins_inet_light/README`](veins_qos/simulations/veins_inet_light/README)
 - Repo-level agent instructions: [`AGENTS.md`](AGENTS.md)
 
 ## Dependency/Framework Documentation

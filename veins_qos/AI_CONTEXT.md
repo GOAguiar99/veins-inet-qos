@@ -34,7 +34,8 @@ Use this mental model when working in the repo:
 - `veins_qos/src/traffic/` contains the custom application-layer traffic generators.
 - `veins_qos/src/qos/` contains the DSCP to user-priority classifier.
 - `veins_qos/src/veins_inet/` contains the Veins+INET integration base and car module used by this project.
-- `veins_qos/simulations/veins_inet/` contains the active OMNeT++/SUMO scenarios and experiment configs.
+- `veins_qos/simulations/veins_inet_highway_light/` and `veins_qos/simulations/veins_inet_highway_heavy/` are the active density-study scenarios.
+- `veins_qos/simulations/veins_inet_square/`, `veins_qos/simulations/veins_inet_highway/`, and `veins_qos/simulations/veins_inet_light/` remain as older or supporting scenarios.
 - `ap_servers/` contains old simulations and should not guide current design decisions.
 - `inet/`, `veins/`, and `omnetpp-6.1/` are dependency/framework trees and are usually read-only.
 
@@ -200,22 +201,12 @@ For this project, it mainly acts as the integration point where the applications
 
 ## Scenario and configuration matrix
 
-The active simulation family is in `simulations/veins_inet/`.
-
-### Baseline scenario family
-
-Files:
-- `Scenario.ned`
-- `omnetpp.ini`
-- `square/` (launch, SUMO config, network, routes, obstacles)
-- `highway/` (launch, SUMO config, network, routes, obstacles)
-
-### Highway density study
-
-Files:
+The active density-study families are:
 
 - `simulations/veins_inet_highway_light/`
 - `simulations/veins_inet_highway_heavy/`
+
+### Highway density study
 
 These two packages keep the same highway corridor but change only the SUMO vehicle count:
 
@@ -234,35 +225,50 @@ For the density-study highway packages, the current load profiles are:
 - `medium`: BE `exponential(500ms)` with `200` byte payload; crash VO `100ms`, `repeatCount=3`
 - `high`: BE `exponential(250ms)` with `320` byte payload; crash VO `75ms`, `repeatCount=4`
 
-### Configs in `omnetpp.ini`
+### Configs in the active `omnetpp.ini`
 
-`plain`
-- non-QoS baseline
-- finite DCF pending queue
-- DSCP tags may still exist at the application level, but they should not translate into EDCA prioritization here
-- use this as the reference case where EDCA prioritization is absent
+Base MAC behavior configs:
 
-`edca_only`
-- enables `qosStation = true`
-- uses finite per-access-category queues
-- installs the custom `QosClassifier`
-- this is the standard EDCA baseline on this branch
+- `plain`
+  - non-QoS baseline
+  - finite DCF pending queue
+  - DSCP tags may still exist at the application level, but they should not translate into EDCA prioritization here
+- `edca_only`
+  - enables `qosStation = true`
+  - uses finite per-access-category queues
+  - installs the custom `QosClassifier`
+  - this is the standard EDCA baseline
+- `edca_v2x_vo_stable`
+  - extends `edca_only`
+  - swaps in the custom `veins_qos.mac.V2xHcf`
+  - uses the adaptive V2X MAC with a milder blocking profile
+- `edca_v2x_vo_guarded`
+  - extends `edca_only`
+  - uses the same adaptive V2X MAC with a stronger VO-protection profile
 
-`edca_v2x`
-- extends `edca_only`
-- swaps in the custom `veins_qos.mac.V2xHcf`
-- activates the local LISTENING/BLOCKING/SENDING FSM that suppresses BE requests while VO demand is active
-- this is the branch's adaptive V2X EDCA experiment
+Network-load overlays:
 
-`highway_edca_only`
-- standard EDCA on the highway scenario
-- uses the same propagation/environment choices as the highway baseline
+- `_netload_low`
+- `_netload_medium`
+- `_netload_high`
 
-`highway_edca_v2x`
-- adaptive V2X EDCA on the highway scenario
-- use this to check whether the branch's MAC behavior survives more realistic propagation and mobility
+The active runnable matrix is the combination of those two dimensions:
 
-No legacy alias configs are kept in the current `.ini`; only the six active configs above are available.
+- `plain_netload_<low|medium|high>`
+- `edca_only_netload_<low|medium|high>`
+- `edca_v2x_vo_stable_netload_<low|medium|high>`
+- `edca_v2x_vo_guarded_netload_<low|medium|high>`
+
+The current scenario-local matrix scripts focus on eight commonly used runs:
+
+- `plain_netload_high`
+- `edca_only_netload_high`
+- `edca_v2x_vo_stable_netload_low`
+- `edca_v2x_vo_stable_netload_medium`
+- `edca_v2x_vo_stable_netload_high`
+- `edca_v2x_vo_guarded_netload_low`
+- `edca_v2x_vo_guarded_netload_medium`
+- `edca_v2x_vo_guarded_netload_high`
 
 ## Wireless and mobility assumptions
 
@@ -362,14 +368,17 @@ make
 Typical run flow:
 
 ```bash
-cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet
-./run -u Cmdenv -c edca_v2x
+cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_light
+./run -u Cmdenv -c edca_v2x_vo_guarded_netload_high
 ```
 
 Notes:
 - `sumo-launchd` must be running before the simulation connects
-- the launch config in `omnetpp.ini` chooses the scenario family
-- the most important place to inspect experiment behavior is `simulations/veins_inet/omnetpp.ini`
+- the scenario package chooses the density family
+- the config name chooses the MAC policy and load profile
+- the most important places to inspect experiment behavior are:
+  - `simulations/veins_inet_highway_light/omnetpp.ini`
+  - `simulations/veins_inet_highway_heavy/omnetpp.ini`
 
 ## Short version for future sessions
 
