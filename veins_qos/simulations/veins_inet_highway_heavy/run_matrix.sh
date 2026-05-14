@@ -3,7 +3,7 @@ set -eu
 
 cd "$(dirname "$0")"
 
-CONFIGS="${CONFIGS:-plain_netload_high edca_only_netload_high edca_v2x_vo_stable_netload_high edca_v2x_vo_guarded_netload_high}"
+CONFIGS="${CONFIGS:-plain_netload_high edca_only_netload_high edca_v2x_vo_stable_netload_high edca_v2x_vo_guarded_netload_high edca_v2x_vo_emergency_netload_high}"
 RUNS="${RUNS:-0}"
 UI="${UI:-Cmdenv}"
 EXTRA_ARGS="${EXTRA_ARGS:-}"

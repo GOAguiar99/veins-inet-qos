@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "mac/V2xEdcaFsmController.h"
+#include "inet/common/Simsignals.h"
 #include "inet/linklayer/ieee80211/mac/Ieee80211Frame_m.h"
 
 namespace veins_qos::mac {
@@ -23,6 +24,7 @@ void V2xHcf::initialize(int stage)
 
     if (stage == INITSTAGE_LOCAL) {
         adaptiveBlocking = par("adaptiveBlocking").boolValue();
+        emergencyPreemption = par("emergencyPreemption").boolValue();
         blockDuration = par("blockDuration");
         maxContinuousBlock = par("maxContinuousBlock");
         voQueueThreshold = std::max(1, static_cast<int>(par("voQueueThreshold").intValue()));
@@ -31,14 +33,26 @@ void V2xHcf::initialize(int stage)
 
         fsmController = check_and_cast<V2xEdcaFsmController *>(getSubmodule("FSMController"));
         beRetryTimer = new cMessage("beRetryTimer");
+        beDroppedWhileBlockedSignal = registerSignal("beDroppedWhileBlocked");
+        beGrantSuppressedWhileBlockedSignal = registerSignal("beGrantSuppressedWhileBlocked");
+        voProtectionActivationSignal = registerSignal("voProtectionActivation");
 
         EV_INFO << "V2xHcf init"
                 << " adaptiveBlocking=" << adaptiveBlocking
+                << " emergencyPreemption=" << emergencyPreemption
                 << " blockDuration=" << blockDuration
                 << " maxContinuousBlock=" << maxContinuousBlock
                 << " voQueueThreshold=" << voQueueThreshold
                 << endl;
     }
+}
+
+void V2xHcf::finish()
+{
+    Hcf::finish();
+    recordScalar("beDroppedWhileBlockedCount", beDroppedWhileBlockedCount);
+    recordScalar("beGrantSuppressedWhileBlockedCount", beGrantSuppressedWhileBlockedCount);
+    recordScalar("voProtectionActivationCount", voProtectionActivationCount);
 }
 
 AccessCategory V2xHcf::classifyAccessCategory(const Ptr<const Ieee80211DataOrMgmtHeader>& header) const
@@ -63,6 +77,12 @@ bool V2xHcf::hasVoQueuePressure() const
     return voQueue != nullptr && voQueue->getNumPackets() >= voQueueThreshold;
 }
 
+bool V2xHcf::hasAnyVoQueuePressure() const
+{
+    auto voQueue = edca->getEdcaf(AccessCategory::AC_VO)->getPendingQueue();
+    return voQueue != nullptr && !voQueue->isEmpty();
+}
+
 bool V2xHcf::isReceivedVoDataForUs(const Ptr<const Ieee80211MacHeader>& header) const
 {
     if (!isForUs(header))
@@ -74,6 +94,38 @@ bool V2xHcf::isReceivedVoDataForUs(const Ptr<const Ieee80211MacHeader>& header) 
 
     // Reuse EDCA classification to keep RX-trigger logic aligned with the active QoS mapping.
     return edca->classifyFrame(dataHeader) == AccessCategory::AC_VO;
+}
+
+bool V2xHcf::isEmergencyBlockingActive() const
+{
+    return adaptiveBlocking && emergencyPreemption && fsmController != nullptr && fsmController->isBeBlocked();
+}
+
+void V2xHcf::activateVoProtection(simtime_t duration)
+{
+    if (!adaptiveBlocking || fsmController == nullptr)
+        return;
+
+    ++voProtectionActivationCount;
+    emit(voProtectionActivationSignal, 1L);
+    fsmController->onVoDemandDetected(duration);
+}
+
+void V2xHcf::dropBeWhileBlocked(Packet *packet)
+{
+    ++beDroppedWhileBlockedCount;
+    emit(beDroppedWhileBlockedSignal, 1L);
+
+    PacketDropDetails details;
+    details.setReason(CONGESTION);
+    emit(packetDroppedSignal, packet, &details);
+
+    EV_WARN << "Dropping BE packet while emergency VO preemption is active"
+            << " pkt=" << packet->getFullName()
+            << " t=" << simTime()
+            << endl;
+
+    delete packet;
 }
 
 void V2xHcf::maybeRequestChannelAccess(AccessCategory ac)
@@ -127,6 +179,12 @@ void V2xHcf::processUpperFrame(Packet *packet, const Ptr<const Ieee80211DataOrMg
     take(packet);
 
     auto ac = classifyAccessCategory(header);
+
+    if (ac == AccessCategory::AC_BE && isEmergencyBlockingActive()) {
+        dropBeWhileBlocked(packet);
+        return;
+    }
+
     auto pendingQueue = edca->getEdcaf(ac)->getPendingQueue();
     pendingQueue->enqueuePacket(packet);
 
@@ -134,8 +192,8 @@ void V2xHcf::processUpperFrame(Packet *packet, const Ptr<const Ieee80211DataOrMg
         return;
 
     if (adaptiveBlocking && fsmController != nullptr) {
-        if (ac == AccessCategory::AC_VO && hasVoQueuePressure()) {
-            fsmController->onVoDemandDetected(blockDuration);
+        if (ac == AccessCategory::AC_VO && (emergencyPreemption ? hasAnyVoQueuePressure() : hasVoQueuePressure())) {
+            activateVoProtection(blockDuration);
             maybeRequestChannelAccess(AccessCategory::AC_VO);
             return;
         }
@@ -155,6 +213,22 @@ void V2xHcf::channelGranted(IChannelAccess *channelAccess)
     Enter_Method("channelGranted");
 
     auto edcaf = check_and_cast<Edcaf *>(channelAccess);
+    if (edcaf->getAccessCategory() == AccessCategory::AC_BE && isEmergencyBlockingActive()) {
+        ++beGrantSuppressedWhileBlockedCount;
+        emit(beGrantSuppressedWhileBlockedSignal, 1L);
+
+        EV_WARN << "Suppressing stale BE channel grant while emergency VO preemption is active"
+                << " t=" << simTime()
+                << endl;
+
+        edcaf->releaseChannel(this);
+        if (hasAnyVoQueuePressure())
+            maybeRequestChannelAccess(AccessCategory::AC_VO);
+        if (hasBeQueuePressure())
+            scheduleBeRetry();
+        return;
+    }
+
     if (adaptiveBlocking && fsmController != nullptr && edcaf->getAccessCategory() == AccessCategory::AC_VO)
         fsmController->onVoTransmissionStart();
 
@@ -175,10 +249,10 @@ void V2xHcf::transmissionComplete(Packet *packet, const Ptr<const Ieee80211MacHe
     Hcf::transmissionComplete(packet, header);
 
     if (adaptiveBlocking && fsmController != nullptr && voDataTxContext) {
-        bool hasPendingVo = hasVoQueuePressure();
+        bool hasPendingVo = emergencyPreemption ? hasAnyVoQueuePressure() : hasVoQueuePressure();
         fsmController->onVoTransmissionEnd(hasPendingVo);
         if (hasPendingVo)
-            fsmController->onVoDemandDetected(blockDuration);
+            activateVoProtection(blockDuration);
         else if (hasBeQueuePressure())
             scheduleBeRetry();
     }
@@ -190,7 +264,7 @@ void V2xHcf::processLowerFrame(Packet *packet, const Ptr<const Ieee80211MacHeade
 
     // Received VO addressed to this node also extends alert mode, reducing BE contention during crash traffic.
     if (adaptiveBlocking && fsmController != nullptr && isReceivedVoDataForUs(header)) {
-        fsmController->onVoDemandDetected(blockDuration);
+        activateVoProtection(blockDuration);
         if (hasBeQueuePressure())
             scheduleBeRetry();
     }

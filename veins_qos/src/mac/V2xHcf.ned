@@ -22,6 +22,7 @@ module V2xHcf like IHcf
         bool isBlockAckSupported = default(false);
 
         bool adaptiveBlocking = default(true); // Enables VO-driven BE suppression via FSMController.
+        bool emergencyPreemption = default(false); // Drops/suppresses BE while VO emergency protection is active.
         double blockDuration @unit(s) = default(40ms); // Alert extension per VO demand event (local TX or received VO).
         double maxContinuousBlock @unit(s) = default(250ms); // Cap for one continuous alert window; <=0 means uncapped.
         int voQueueThreshold = default(1); // Local VO queue threshold that triggers alert from upper traffic.
@@ -46,6 +47,9 @@ module V2xHcf like IHcf
         @signal[datarateSelected](type=double);
         @signal[blockAckAgreementAdded];
         @signal[blockAckAgreementDeleted];
+        @signal[beDroppedWhileBlocked](type=long);
+        @signal[beGrantSuppressedWhileBlocked](type=long);
+        @signal[voProtectionActivation](type=long);
         @statistic[packetSentToPeer](title="packets sent"; record=count,sum(packetBytes),vector(packetBytes); interpolationmode=none);
         @statistic[packetSentToPeerUnicast](title="packets sent: unicast"; source=ieee80211Unicast(packetSentToPeer); record=count,sum(packetBytes),vector(packetBytes); interpolationmode=none);
         @statistic[packetSentToPeerMulticast](title="packets sent: multicast"; source=ieee80211Multicast(packetSentToPeer); record=count,sum(packetBytes),vector(packetBytes); interpolationmode=none);
@@ -72,6 +76,9 @@ module V2xHcf like IHcf
         @statistic[blockAckAgreementAdded](title="added block ack agreements"; record=count);
         @statistic[blockAckAgreementDeleted](title="deleted block ack agreements"; record=count);
         @statistic[blockAckAgreementActive](title="active block ack agreements"; source=warmup(count(blockAckAgreementAdded)-count(blockAckAgreementDeleted)); record=vector; interpolationmode=sample-hold; autoWarmupFilter=false);
+        @statistic[beDroppedWhileBlocked](title="BE packets dropped by emergency preemption"; record=count; interpolationmode=none);
+        @statistic[beGrantSuppressedWhileBlocked](title="BE channel grants suppressed by emergency preemption"; record=count; interpolationmode=none);
+        @statistic[voProtectionActivation](title="VO protection activations"; record=count; interpolationmode=none);
 
     submodules:
         edca: Edca {
