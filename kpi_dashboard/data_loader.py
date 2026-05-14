@@ -30,7 +30,7 @@ EDCAF_RECOVERY_RE = re.compile(
 
 AC_INDEX_BE = 1
 AC_INDEX_VO = 3
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 DEFAULT_TIMELINE_BIN_SIZE_S = 1.0
 CACHE_DIR_NAME = ".kpi_cache"
 
@@ -51,6 +51,7 @@ RUN_ROW_COLUMNS = [
     "be_tx_count",
     "be_rx_count",
     "vo_tx_count",
+    "vo_physical_tx_count",
     "vo_rx_count",
     "be_rx_per_tx",
     "vo_rx_per_tx",
@@ -83,6 +84,7 @@ CONFIG_SUMMARY_COLUMNS = [
     "vo_jitter_ms",
     "vo_rx_per_tx",
     "vo_tx_count",
+    "vo_physical_tx_count",
     "vo_rx_count",
     "mac_drop_sum_count",
     "mac_drop_be_count",
@@ -456,7 +458,8 @@ def parse_sca_file(path: Path, vec_stats: Dict[str, float] | None = None) -> Dic
 
     be_tx_total = 0.0
     be_rx_total = 0.0
-    vo_tx_total = 0.0
+    vo_logical_tx_total = 0.0
+    vo_physical_tx_total = 0.0
     vo_rx_total = 0.0
 
     be_delay_weighted_sum = 0.0
@@ -532,7 +535,9 @@ def parse_sca_file(path: Path, vec_stats: Dict[str, float] | None = None) -> Dic
                     vo_delay_max_values.append(value)
             elif APP1_RE.match(module):
                 if metric == "voTxPackets:count":
-                    vo_tx_total += value
+                    vo_physical_tx_total += value
+                elif metric == "voLogicalTxPackets:count":
+                    vo_logical_tx_total += value
             elif MAC_RE.match(module):
                 if metric == "packetDrop:count":
                     mac_drop_total += value
@@ -649,7 +654,8 @@ def parse_sca_file(path: Path, vec_stats: Dict[str, float] | None = None) -> Dic
         no_vo_attribution = math.isnan(mac_drop_vo_count) or mac_drop_vo_count == 0
         mac_drop_unclassified_count = int(round(mac_drop_total)) if mac_drop_total > 0 and no_be_attribution and no_vo_attribution else 0
 
-    app_tx_total = be_tx_total + vo_tx_total
+    vo_tx_total = vo_logical_tx_total if vo_logical_tx_total > 0 else vo_physical_tx_total
+    app_tx_total = be_tx_total + vo_physical_tx_total
 
     return {
         "config": configname,
@@ -668,6 +674,7 @@ def parse_sca_file(path: Path, vec_stats: Dict[str, float] | None = None) -> Dic
         "be_tx_count": int(round(be_tx_total)),
         "be_rx_count": int(round(be_rx_total)),
         "vo_tx_count": int(round(vo_tx_total)),
+        "vo_physical_tx_count": int(round(vo_physical_tx_total)),
         "vo_rx_count": int(round(vo_rx_total)),
         "be_rx_per_tx": (be_rx_total / be_tx_total) if be_tx_total > 0 else math.nan,
         "vo_rx_per_tx": (vo_rx_total / vo_tx_total) if vo_tx_total > 0 else math.nan,
@@ -677,7 +684,7 @@ def parse_sca_file(path: Path, vec_stats: Dict[str, float] | None = None) -> Dic
         "mac_drop_be_count": mac_drop_be_count,
         "mac_drop_vo_count": mac_drop_vo_count,
         "mac_drop_unclassified_count": mac_drop_unclassified_count,
-        "mac_drop_vo_per_vo_tx": (mac_drop_vo_count / vo_tx_total) if vo_tx_total > 0 and not math.isnan(mac_drop_vo_count) else math.nan,
+        "mac_drop_vo_per_vo_tx": (mac_drop_vo_count / vo_physical_tx_total) if vo_physical_tx_total > 0 and not math.isnan(mac_drop_vo_count) else math.nan,
         "mac_drop_be_per_be_tx": (mac_drop_be_count / be_tx_total) if be_tx_total > 0 and not math.isnan(mac_drop_be_count) else math.nan,
         "mac_drop_per_tx": (mac_drop_total / app_tx_total) if app_tx_total > 0 else math.nan,
     }

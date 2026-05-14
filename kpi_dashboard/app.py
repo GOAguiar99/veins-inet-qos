@@ -45,6 +45,7 @@ CONFIG_SUMMARY_COLUMNS = [
     "vo_jitter_ms",
     "vo_rx_per_tx",
     "vo_tx_count",
+    "vo_physical_tx_count",
     "vo_rx_count",
     "mac_drop_sum_count",
     "mac_drop_be_count",
@@ -71,6 +72,7 @@ CONFIG_SUMMARY_TABLE_COLUMNS = [
     "vo_jitter_ms",
     "vo_rx_per_tx",
     "vo_tx_count",
+    "vo_physical_tx_count",
     "vo_rx_count",
     "mac_drop_sum_count",
     "mac_drop_be_count",
@@ -143,8 +145,9 @@ DISPLAY_LABELS = {
     "vo_delay_p95_ms": "VO P95 Delay (ms)",
     "vo_delay_max_ms": "VO Max Delay (ms)",
     "vo_jitter_ms": "VO Jitter (ms)",
-    "vo_rx_per_tx": "VO RX per TX",
-    "vo_tx_count": "VO TX",
+    "vo_rx_per_tx": "VO RX per Logical TX",
+    "vo_tx_count": "VO Logical TX",
+    "vo_physical_tx_count": "VO Physical TX",
     "vo_rx_count": "VO RX",
     "throughput_kbps": "Total Throughput (kbps)",
     "throughput_be_kbps": "BE Throughput (kbps)",
@@ -160,7 +163,7 @@ DISPLAY_LABELS = {
     "mac_drop_queue_overflow_count": "MAC Drop Queue Overflow",
     "mac_drop_retry_limit_count": "MAC Drop Retry Limit",
     "mac_drop_be_per_be_tx": "MAC BE Drops per BE TX",
-    "mac_drop_vo_per_vo_tx": "MAC VO Drops per VO TX",
+    "mac_drop_vo_per_vo_tx": "MAC VO Drops per Physical VO TX",
     "mac_drop_per_tx": "MAC Drops per App TX",
     "baseline": "Baseline",
     "vo_delay_p95_delta_ms": "VO P95 Delta (ms)",
@@ -171,7 +174,7 @@ DISPLAY_LABELS = {
     "be_delay_delta_ms": "BE Mean Delta (ms)",
     "vo_jitter_delta_ms": "VO Jitter Delta (ms)",
     "be_jitter_delta_ms": "BE Jitter Delta (ms)",
-    "vo_rx_per_tx_delta": "VO RX per TX Delta",
+    "vo_rx_per_tx_delta": "VO RX per Logical TX Delta",
     "be_rx_per_tx_delta": "BE RX per TX Delta",
     "mac_drop_delta_count": "MAC Drop Delta (count)",
     "mac_drop_be_delta_count": "MAC BE Drop Delta (count)",
@@ -254,6 +257,7 @@ RUN_EXPORT_COLUMNS = [
     "vo_jitter_ms",
     "vo_rx_per_tx",
     "vo_tx_count",
+    "vo_physical_tx_count",
     "vo_rx_count",
     "mac_drop_sum_count",
     "mac_drop_be_count",
@@ -589,7 +593,7 @@ def _build_v2x_workload_comparison(config_summary: pd.DataFrame) -> pd.DataFrame
         ("VO P95 Delay (ms)", "vo_delay_p95_ms"),
         ("VO Mean Delay (ms)", "vo_delay_ms"),
         ("VO Jitter (ms)", "vo_jitter_ms"),
-        ("VO RX per TX", "vo_rx_per_tx"),
+        ("VO RX per Logical TX", "vo_rx_per_tx"),
         ("BE P95 Delay (ms)", "be_delay_p95_ms"),
         ("BE Mean Delay (ms)", "be_delay_ms"),
         ("BE Jitter (ms)", "be_jitter_ms"),
@@ -691,7 +695,7 @@ def _plot_reception_efficiency(frame: pd.DataFrame, simulation_label: str):
     melted["metric"] = melted["metric"].map(
         {
             "be_rx_per_tx": "BE RX per TX",
-            "vo_rx_per_tx": "VO RX per TX",
+            "vo_rx_per_tx": "VO RX per Logical TX",
         }
     )
     fig = px.bar(
@@ -702,7 +706,7 @@ def _plot_reception_efficiency(frame: pd.DataFrame, simulation_label: str):
         barmode="group",
         title=f"Multicast Reach ({simulation_label})",
     )
-    fig.update_layout(yaxis_title="Receptions per Transmission", xaxis_title="Config")
+    fig.update_layout(yaxis_title="Receptions per TX", xaxis_title="Config")
     return fig
 
 
@@ -712,7 +716,7 @@ def _plot_counts(frame: pd.DataFrame, simulation_label: str):
 
     melted = frame.melt(
         id_vars=["config"],
-        value_vars=["be_tx_count", "be_rx_count", "vo_tx_count", "vo_rx_count"],
+        value_vars=["be_tx_count", "be_rx_count", "vo_tx_count", "vo_physical_tx_count", "vo_rx_count"],
         var_name="metric",
         value_name="count",
     )
@@ -720,7 +724,8 @@ def _plot_counts(frame: pd.DataFrame, simulation_label: str):
         {
             "be_tx_count": "BE TX",
             "be_rx_count": "BE RX",
-            "vo_tx_count": "VO TX",
+            "vo_tx_count": "VO Logical TX",
+            "vo_physical_tx_count": "VO Physical TX",
             "vo_rx_count": "VO RX",
         }
     )
@@ -848,7 +853,7 @@ def _plot_drop_rates(frame: pd.DataFrame, simulation_label: str):
         {
             "mac_drop_per_tx": "Overall Drops per App TX",
             "mac_drop_be_per_be_tx": "BE Drops per BE TX",
-            "mac_drop_vo_per_vo_tx": "VO Drops per VO TX",
+            "mac_drop_vo_per_vo_tx": "VO Drops per Physical VO TX",
         }
     )
 

@@ -40,7 +40,7 @@ class CrashBurstApp : public veins::VeinsInetApplicationBase
     void startCrashTraffic();
     void scheduleNext(uint64_t myGen);
     void sendBurst(uint64_t myGen, int sequenceNumber);
-    void sendOne(int sequenceNumber, int repeatIndex);
+    void sendOne(int sequenceNumber, int repeatIndex, simtime_t logicalCreationTime);
 
     void processPacket(std::shared_ptr<inet::Packet> pk) override;
 };

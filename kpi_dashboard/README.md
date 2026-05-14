@@ -107,7 +107,7 @@ python app.py --results /home/goaguiar/master/master_veins/veins_qos/simulations
    - BE/VO TX-RX count chart
    - MAC drop breakdown chart (`total`, `BE`, `VO`, `queue overflow`, `retry limit`)
    - normalized drop-rate chart (`overall`, `BE per BE_TX`, `VO per VO_TX`)
-   - protection-vs-cost scatter (`BE P95 delay` vs `VO P95 delay`, marker size = `VO RX per TX`) using one point per config
+   - protection-vs-cost scatter (`BE P95 delay` vs `VO P95 delay`, marker size = `VO RX per logical TX`) using one point per config
    - comparison-vs-baseline table (absolute + percent deltas)
    - delta protection-vs-cost scatter (`BE P95 delta` vs `VO P95 delta`)
    - `Download CSV` buttons: export each KPI table separately for sharing
@@ -175,7 +175,8 @@ The lower-right area indicates stronger VO protection with BE penalty, which is 
 - `BE/VO P95 delay`: 95th percentile computed from per-packet delay vectors
 - `BE/VO jitter`: mean absolute change between consecutive packet delays, computed per receiver stream and aggregated
 - `BE TX/RX`: sum of `beTxPackets:count` and `beRxPackets:count` over nodes (`app[0]`)
-- `VO TX`: sum of `voTxPackets:count` over nodes (`app[1]`)
+- `VO TX`: sum of `voLogicalTxPackets:count` over nodes (`app[1]`) when available, otherwise legacy `voTxPackets:count`
+- `VO physical TX`: sum of repeated physical `voTxPackets:count` over nodes (`app[1]`)
 - `VO RX`: sum of `voRxPackets:count` over nodes (`app[0]`)
 - `MAC drops (total)`: sum of `packetDrop:count` over `Scenario.node[*].wlan[*].mac`
 - `MAC sum of all drops`: alias of `MAC drops (total)` for explicit JSON export
@@ -184,9 +185,9 @@ The lower-right area indicates stronger VO protection with BE penalty, which is 
 - `MAC drops (unclassified)`: `packetDropAcUnclassifiedCount` when available; otherwise falls back to total MAC drops when BE/VO attribution is absent (typical in plain DCF)
 - `MAC drops (queue overflow)`: sum of `packetDropQueueOverflow:count` over `Scenario.node[*].wlan[*].mac`
 - `MAC drops (retry limit)`: sum of `packetDropRetryLimitReached:count` over `Scenario.node[*].wlan[*].mac`
-- `MAC drops per app TX`: `mac_drop_sum_count / (BE_TX + VO_TX)`
+- `MAC drops per app TX`: `mac_drop_sum_count / (BE_TX + VO physical TX)`
 - `MAC BE drops per BE TX`: `mac_drop_be_count / BE_TX`
-- `MAC VO drops per VO TX`: `mac_drop_vo_count / VO_TX`
+- `MAC VO drops per VO TX`: `mac_drop_vo_count / VO physical TX`
 - `MAC drop harmonization`: if BE/VO/unclassified AC-attributed totals sum to approximately `2x` `packetDrop:count`, the dashboard divides AC-attributed counters by `2` to align them with the total-drop basis.
 
 For legacy runs without per-AC attribution scalars, the dashboard falls back to EDCAF queue-overflow/retry counters (or `NaN` when unavailable, for example plain DCF).
@@ -200,7 +201,7 @@ For legacy runs without per-AC attribution scalars, the dashboard falls back to 
 
 For multicast runs, the dashboard uses `RX per TX` instead of calling this a delivery ratio:
 - `be_rx_per_tx = BE_RX / BE_TX`
-- `vo_rx_per_tx = VO_RX / VO_TX`
+- `vo_rx_per_tx = VO_RX / VO logical TX` when available, otherwise legacy `VO_RX / VO physical TX`
 
 This is more honest for the current experiment because one transmission may be received by multiple vehicles.
 
