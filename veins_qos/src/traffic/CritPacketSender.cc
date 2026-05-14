@@ -1,5 +1,7 @@
 #include "CritPacketSender.h"
 
+#include <string>
+
 #include "inet/common/SequenceNumberTag_m.h"
 #include "inet/common/TimeTag_m.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
@@ -22,6 +24,28 @@ const simsignal_t kBeRxPacketCountSignal = cComponent::registerSignal("beRxPacke
 const simsignal_t kVoRxPacketCountSignal = cComponent::registerSignal("voRxPacketCount");
 const simsignal_t kBeE2eDelaySignal = cComponent::registerSignal("beE2eDelay");
 const simsignal_t kVoE2eDelaySignal = cComponent::registerSignal("voE2eDelay");
+
+int parseCrashSequenceFromName(const char *name)
+{
+    const std::string text = name == nullptr ? "" : name;
+    const auto repeatMarker = text.rfind("_r");
+    if (repeatMarker == std::string::npos || repeatMarker == 0)
+        return -1;
+
+    const auto sequenceStart = text.rfind('_', repeatMarker - 1);
+    if (sequenceStart == std::string::npos || sequenceStart + 1 >= repeatMarker)
+        return -1;
+
+    try {
+        const auto sequenceText = text.substr(sequenceStart + 1, repeatMarker - sequenceStart - 1);
+        std::size_t consumed = 0;
+        const int sequence = std::stoi(sequenceText, &consumed);
+        return consumed == sequenceText.size() ? sequence : -1;
+    }
+    catch (...) {
+        return -1;
+    }
+}
 } // namespace
 
 bool CritPacketSender::startApplication()
@@ -127,6 +151,8 @@ void CritPacketSender::processPacket(std::shared_ptr<Packet> pk)
         seq = seqInd->getSequenceNumber();
     else if (const auto seqReq = pk->findTag<SequenceNumberReq>())
         seq = seqReq->getSequenceNumber();
+    else if (rxDscp == kDscpVo)
+        seq = parseCrashSequenceFromName(pk->getName());
 
     const bool isSelfOrigin = !src.isUnspecified() && src == selfAddress;
 
@@ -142,15 +168,6 @@ void CritPacketSender::processPacket(std::shared_ptr<Packet> pk)
     // Multicast is also delivered locally; exclude looped-back self traffic from e2e KPIs.
     if (isSelfOrigin)
         return;
-
-    if (voDedupWindow > SIMTIME_ZERO) {
-        for (auto it = voDedupSeen.begin(); it != voDedupSeen.end();) {
-            if (it->second + voDedupWindow < simTime())
-                it = voDedupSeen.erase(it);
-            else
-                ++it;
-        }
-    }
 
     if (rxDscp == kDscpBe) {
         emit(kBeRxPacketCountSignal, 1L);
