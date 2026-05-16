@@ -1820,6 +1820,19 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
       border: 1px solid var(--line);
       border-radius: 6px;
     }
+    .table-tools {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .copy-status {
+      color: var(--muted);
+      font-size: 12px;
+      min-width: 56px;
+      text-align: right;
+    }
     table {
       width: 100%;
       min-width: 980px;
@@ -1938,7 +1951,58 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
         }).join('');
         return `<tr>${cells}</tr>`;
       }).join('');
-      target.innerHTML = `<div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table></div>`;
+      target.innerHTML = `
+        <div class="table-tools">
+          <button type="button" data-copy-table="${escapeHtml(targetId)}">Copy table</button>
+          <span class="copy-status" id="${escapeHtml(targetId)}_copy_status"></span>
+        </div>
+        <div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table></div>
+      `;
+      const copyButton = target.querySelector('[data-copy-table]');
+      copyButton.addEventListener('click', () => copyTable(targetId, table));
+    }
+
+    async function copyTable(targetId, table) {
+      const status = document.getElementById(`${targetId}_copy_status`);
+      const text = tableToTsv(table);
+      try {
+        await navigator.clipboard.writeText(text);
+        status.textContent = 'Copied';
+      } catch (_error) {
+        fallbackCopyText(text);
+        status.textContent = 'Copied';
+      }
+      window.setTimeout(() => { status.textContent = ''; }, 1800);
+    }
+
+    function tableToTsv(table) {
+      const header = table.columns.map((column) => tsvCell(column.label)).join('\t');
+      const rows = table.rows.map((row) =>
+        table.columns.map((column) => tsvCell(rawValue(row[column.id]))).join('\t')
+      );
+      return [header, ...rows].join('\n');
+    }
+
+    function rawValue(value) {
+      if (value === null || value === undefined) return 'N/A';
+      if (typeof value === 'number') return String(value);
+      return String(value);
+    }
+
+    function tsvCell(value) {
+      return String(value).replaceAll('\t', ' ').replaceAll('\r', ' ').replaceAll('\n', ' ');
+    }
+
+    function fallbackCopyText(text) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      textarea.remove();
     }
 
     function formatValue(value) {
