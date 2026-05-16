@@ -9,8 +9,8 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-const CACHE_SCHEMA_VERSION: u32 = 2;
-const PARSER_VERSION: &str = "rust-kpi-dashboard-0.1.0";
+const CACHE_SCHEMA_VERSION: u32 = 3;
+const PARSER_VERSION: &str = "rust-kpi-dashboard-0.2.0";
 const CACHE_DIR_NAME: &str = ".kpi_cache_rs";
 const AC_INDEX_BE: u8 = 1;
 const AC_INDEX_VO: u8 = 3;
@@ -74,8 +74,20 @@ define_metrics!(
     mac_drop_be_count,
     mac_drop_vo_count,
     mac_drop_unclassified_count,
+    mac_drop_be_incorrect_rx_count,
+    mac_drop_vo_incorrect_rx_count,
+    mac_drop_be_queue_overflow_count,
+    mac_drop_vo_queue_overflow_count,
+    mac_drop_be_retry_limit_count,
+    mac_drop_vo_retry_limit_count,
+    mac_drop_be_congestion_count,
+    mac_drop_vo_congestion_count,
     mac_drop_vo_per_vo_tx,
     mac_drop_be_per_be_tx,
+    mac_drop_vo_queue_overflow_per_vo_tx,
+    mac_drop_vo_incorrect_rx_per_vo_tx,
+    mac_drop_be_queue_overflow_per_be_tx,
+    mac_drop_be_incorrect_rx_per_be_tx,
     mac_drop_per_tx,
     be_dropped_while_blocked_count,
     be_grant_suppressed_while_blocked_count,
@@ -572,9 +584,25 @@ fn parse_sca_file(path: &Path, vec_metrics: &VecMetrics) -> Result<RunRow> {
     let mut mac_drop_be_total_from_mac = 0.0;
     let mut mac_drop_vo_total_from_mac = 0.0;
     let mut mac_drop_unclassified_total = 0.0;
+    let mut mac_drop_be_incorrect_rx_total = 0.0;
+    let mut mac_drop_vo_incorrect_rx_total = 0.0;
+    let mut mac_drop_be_queue_overflow_from_mac = 0.0;
+    let mut mac_drop_vo_queue_overflow_from_mac = 0.0;
+    let mut mac_drop_be_retry_limit_from_mac = 0.0;
+    let mut mac_drop_vo_retry_limit_from_mac = 0.0;
+    let mut mac_drop_be_congestion_total = 0.0;
+    let mut mac_drop_vo_congestion_total = 0.0;
     let mut saw_be_ac_metrics_from_mac = false;
     let mut saw_vo_ac_metrics_from_mac = false;
     let mut saw_unclassified_ac_metrics = false;
+    let mut saw_be_incorrect_rx_metrics = false;
+    let mut saw_vo_incorrect_rx_metrics = false;
+    let mut saw_be_queue_overflow_metrics_from_mac = false;
+    let mut saw_vo_queue_overflow_metrics_from_mac = false;
+    let mut saw_be_retry_limit_metrics_from_mac = false;
+    let mut saw_vo_retry_limit_metrics_from_mac = false;
+    let mut saw_be_congestion_metrics = false;
+    let mut saw_vo_congestion_metrics = false;
     let mut saw_be_ac_metrics = false;
     let mut saw_vo_ac_metrics = false;
 
@@ -653,6 +681,38 @@ fn parse_sca_file(path: &Path, vec_metrics: &VecMetrics) -> Result<RunRow> {
                 "packetDrop:count" => mac_drop_total += value,
                 "packetDropQueueOverflow:count" => mac_drop_queue_overflow_total += value,
                 "packetDropRetryLimitReached:count" => mac_drop_retry_limit_total += value,
+                "packetDropAcBeReasonIncorrectlyReceivedCount" => {
+                    saw_be_incorrect_rx_metrics = true;
+                    mac_drop_be_incorrect_rx_total += value;
+                }
+                "packetDropAcVoReasonIncorrectlyReceivedCount" => {
+                    saw_vo_incorrect_rx_metrics = true;
+                    mac_drop_vo_incorrect_rx_total += value;
+                }
+                "packetDropAcBeReasonQueueOverflowCount" => {
+                    saw_be_queue_overflow_metrics_from_mac = true;
+                    mac_drop_be_queue_overflow_from_mac += value;
+                }
+                "packetDropAcVoReasonQueueOverflowCount" => {
+                    saw_vo_queue_overflow_metrics_from_mac = true;
+                    mac_drop_vo_queue_overflow_from_mac += value;
+                }
+                "packetDropAcBeReasonRetryLimitReachedCount" => {
+                    saw_be_retry_limit_metrics_from_mac = true;
+                    mac_drop_be_retry_limit_from_mac += value;
+                }
+                "packetDropAcVoReasonRetryLimitReachedCount" => {
+                    saw_vo_retry_limit_metrics_from_mac = true;
+                    mac_drop_vo_retry_limit_from_mac += value;
+                }
+                "packetDropAcBeReasonCongestionCount" => {
+                    saw_be_congestion_metrics = true;
+                    mac_drop_be_congestion_total += value;
+                }
+                "packetDropAcVoReasonCongestionCount" => {
+                    saw_vo_congestion_metrics = true;
+                    mac_drop_vo_congestion_total += value;
+                }
                 _ => {
                     if let Some(ac) = parse_packet_drop_ac(metric) {
                         match ac {
@@ -754,9 +814,11 @@ fn parse_sca_file(path: &Path, vec_metrics: &VecMetrics) -> Result<RunRow> {
     .into_iter()
     .flatten()
     .sum();
+    let mut drop_attribution_scale = 1.0;
     if mac_drop_total > 0.0 && attributed_drop_sum > 0.0 {
         let ratio = attributed_drop_sum / mac_drop_total;
         if (1.9..=2.1).contains(&ratio) {
+            drop_attribution_scale = 0.5;
             mac_drop_be_value = mac_drop_be_value.map(|value| value / 2.0);
             mac_drop_vo_value = mac_drop_vo_value.map(|value| value / 2.0);
             mac_drop_unclassified_value = mac_drop_unclassified_value.map(|value| value / 2.0);
@@ -776,6 +838,43 @@ fn parse_sca_file(path: &Path, vec_metrics: &VecMetrics) -> Result<RunRow> {
             Some(0.0)
         }
     };
+
+    let mac_drop_be_incorrect_rx_count = saw_be_incorrect_rx_metrics
+        .then_some((mac_drop_be_incorrect_rx_total * drop_attribution_scale).round());
+    let mac_drop_vo_incorrect_rx_count = saw_vo_incorrect_rx_metrics
+        .then_some((mac_drop_vo_incorrect_rx_total * drop_attribution_scale).round());
+    let mac_drop_be_queue_overflow_count = if saw_be_queue_overflow_metrics_from_mac {
+        Some((mac_drop_be_queue_overflow_from_mac * drop_attribution_scale).round())
+    } else if saw_be_ac_metrics {
+        Some(mac_drop_be_queue_overflow_total.round())
+    } else {
+        None
+    };
+    let mac_drop_vo_queue_overflow_count = if saw_vo_queue_overflow_metrics_from_mac {
+        Some((mac_drop_vo_queue_overflow_from_mac * drop_attribution_scale).round())
+    } else if saw_vo_ac_metrics {
+        Some(mac_drop_vo_queue_overflow_total.round())
+    } else {
+        None
+    };
+    let mac_drop_be_retry_limit_count = if saw_be_retry_limit_metrics_from_mac {
+        Some((mac_drop_be_retry_limit_from_mac * drop_attribution_scale).round())
+    } else if saw_be_ac_metrics {
+        Some(mac_drop_be_retry_limit_total.round())
+    } else {
+        None
+    };
+    let mac_drop_vo_retry_limit_count = if saw_vo_retry_limit_metrics_from_mac {
+        Some((mac_drop_vo_retry_limit_from_mac * drop_attribution_scale).round())
+    } else if saw_vo_ac_metrics {
+        Some(mac_drop_vo_retry_limit_total.round())
+    } else {
+        None
+    };
+    let mac_drop_be_congestion_count = saw_be_congestion_metrics
+        .then_some((mac_drop_be_congestion_total * drop_attribution_scale).round());
+    let mac_drop_vo_congestion_count = saw_vo_congestion_metrics
+        .then_some((mac_drop_vo_congestion_total * drop_attribution_scale).round());
 
     let vo_tx_total = if vo_logical_tx_total > 0.0 {
         vo_logical_tx_total
@@ -833,8 +932,32 @@ fn parse_sca_file(path: &Path, vec_metrics: &VecMetrics) -> Result<RunRow> {
             mac_drop_be_count,
             mac_drop_vo_count,
             mac_drop_unclassified_count,
+            mac_drop_be_incorrect_rx_count,
+            mac_drop_vo_incorrect_rx_count,
+            mac_drop_be_queue_overflow_count,
+            mac_drop_vo_queue_overflow_count,
+            mac_drop_be_retry_limit_count,
+            mac_drop_vo_retry_limit_count,
+            mac_drop_be_congestion_count,
+            mac_drop_vo_congestion_count,
             mac_drop_vo_per_vo_tx: ratio_optional(mac_drop_vo_count, vo_physical_tx_total),
             mac_drop_be_per_be_tx: ratio_optional(mac_drop_be_count, be_tx_total),
+            mac_drop_vo_queue_overflow_per_vo_tx: ratio_optional(
+                mac_drop_vo_queue_overflow_count,
+                vo_physical_tx_total,
+            ),
+            mac_drop_vo_incorrect_rx_per_vo_tx: ratio_optional(
+                mac_drop_vo_incorrect_rx_count,
+                vo_physical_tx_total,
+            ),
+            mac_drop_be_queue_overflow_per_be_tx: ratio_optional(
+                mac_drop_be_queue_overflow_count,
+                be_tx_total,
+            ),
+            mac_drop_be_incorrect_rx_per_be_tx: ratio_optional(
+                mac_drop_be_incorrect_rx_count,
+                be_tx_total,
+            ),
             mac_drop_per_tx: ratio(mac_drop_total, app_tx_total),
             be_dropped_while_blocked_count: be_dropped_while_blocked_total
                 .map(|value| value.round()),
@@ -976,6 +1099,38 @@ fn build_comparison_rows(
         );
         add_comparison_metric(
             &mut row,
+            "mac_drop_vo_incorrect_rx_count",
+            "mac_drop_vo_incorrect_rx_delta_count",
+            "mac_drop_vo_incorrect_rx_delta_pct",
+            summary.metrics.mac_drop_vo_incorrect_rx_count,
+            base_metrics.mac_drop_vo_incorrect_rx_count,
+        );
+        add_comparison_metric(
+            &mut row,
+            "mac_drop_vo_queue_overflow_count",
+            "mac_drop_vo_queue_overflow_delta_count",
+            "mac_drop_vo_queue_overflow_delta_pct",
+            summary.metrics.mac_drop_vo_queue_overflow_count,
+            base_metrics.mac_drop_vo_queue_overflow_count,
+        );
+        add_comparison_metric(
+            &mut row,
+            "mac_drop_be_incorrect_rx_count",
+            "mac_drop_be_incorrect_rx_delta_count",
+            "mac_drop_be_incorrect_rx_delta_pct",
+            summary.metrics.mac_drop_be_incorrect_rx_count,
+            base_metrics.mac_drop_be_incorrect_rx_count,
+        );
+        add_comparison_metric(
+            &mut row,
+            "mac_drop_be_queue_overflow_count",
+            "mac_drop_be_queue_overflow_delta_count",
+            "mac_drop_be_queue_overflow_delta_pct",
+            summary.metrics.mac_drop_be_queue_overflow_count,
+            base_metrics.mac_drop_be_queue_overflow_count,
+        );
+        add_comparison_metric(
+            &mut row,
             "mac_drop_per_tx",
             "mac_drop_per_tx_delta",
             "mac_drop_per_tx_delta_pct",
@@ -1034,6 +1189,30 @@ fn build_v2x_variant_matrix(config_summary: &[ConfigSummary]) -> Vec<BTreeMap<St
         ("BE Jitter (ms)", "be_jitter_ms"),
         ("BE RX per TX", "be_rx_per_tx"),
         ("MAC Total Drops", "mac_drop_sum_count"),
+        (
+            "MAC VO Incorrect RX Drops",
+            "mac_drop_vo_incorrect_rx_count",
+        ),
+        (
+            "MAC VO Incorrect RX per Physical VO TX",
+            "mac_drop_vo_incorrect_rx_per_vo_tx",
+        ),
+        (
+            "MAC VO Queue Overflow Drops",
+            "mac_drop_vo_queue_overflow_count",
+        ),
+        (
+            "MAC VO Queue Overflow per Physical VO TX",
+            "mac_drop_vo_queue_overflow_per_vo_tx",
+        ),
+        (
+            "MAC BE Incorrect RX Drops",
+            "mac_drop_be_incorrect_rx_count",
+        ),
+        (
+            "MAC BE Queue Overflow Drops",
+            "mac_drop_be_queue_overflow_count",
+        ),
         ("MAC Drops per TX", "mac_drop_per_tx"),
         ("BE Dropped While Blocked", "be_dropped_while_blocked_count"),
         (
@@ -1533,6 +1712,18 @@ const CONFIG_SUMMARY_TABLE_COLUMNS: &[&str] = &[
     "mac_drop_be_count",
     "mac_drop_vo_count",
     "mac_drop_unclassified_count",
+    "mac_drop_be_incorrect_rx_count",
+    "mac_drop_vo_incorrect_rx_count",
+    "mac_drop_be_queue_overflow_count",
+    "mac_drop_vo_queue_overflow_count",
+    "mac_drop_be_retry_limit_count",
+    "mac_drop_vo_retry_limit_count",
+    "mac_drop_be_congestion_count",
+    "mac_drop_vo_congestion_count",
+    "mac_drop_vo_queue_overflow_per_vo_tx",
+    "mac_drop_vo_incorrect_rx_per_vo_tx",
+    "mac_drop_be_queue_overflow_per_be_tx",
+    "mac_drop_be_incorrect_rx_per_be_tx",
     "mac_drop_per_tx",
     "be_dropped_while_blocked_count",
     "be_grant_suppressed_while_blocked_count",
@@ -1566,8 +1757,20 @@ const RUN_ROW_COLUMNS: &[&str] = &[
     "mac_drop_be_count",
     "mac_drop_vo_count",
     "mac_drop_unclassified_count",
+    "mac_drop_be_incorrect_rx_count",
+    "mac_drop_vo_incorrect_rx_count",
+    "mac_drop_be_queue_overflow_count",
+    "mac_drop_vo_queue_overflow_count",
+    "mac_drop_be_retry_limit_count",
+    "mac_drop_vo_retry_limit_count",
+    "mac_drop_be_congestion_count",
+    "mac_drop_vo_congestion_count",
     "mac_drop_vo_per_vo_tx",
     "mac_drop_be_per_be_tx",
+    "mac_drop_vo_queue_overflow_per_vo_tx",
+    "mac_drop_vo_incorrect_rx_per_vo_tx",
+    "mac_drop_be_queue_overflow_per_be_tx",
+    "mac_drop_be_incorrect_rx_per_be_tx",
     "mac_drop_per_tx",
     "be_dropped_while_blocked_count",
     "be_grant_suppressed_while_blocked_count",
@@ -1605,6 +1808,18 @@ const COMPARISON_COLUMNS: &[&str] = &[
     "mac_drop_sum_count",
     "mac_drop_delta_count",
     "mac_drop_delta_pct",
+    "mac_drop_vo_incorrect_rx_count",
+    "mac_drop_vo_incorrect_rx_delta_count",
+    "mac_drop_vo_incorrect_rx_delta_pct",
+    "mac_drop_vo_queue_overflow_count",
+    "mac_drop_vo_queue_overflow_delta_count",
+    "mac_drop_vo_queue_overflow_delta_pct",
+    "mac_drop_be_incorrect_rx_count",
+    "mac_drop_be_incorrect_rx_delta_count",
+    "mac_drop_be_incorrect_rx_delta_pct",
+    "mac_drop_be_queue_overflow_count",
+    "mac_drop_be_queue_overflow_delta_count",
+    "mac_drop_be_queue_overflow_delta_pct",
     "mac_drop_per_tx",
     "mac_drop_per_tx_delta",
     "mac_drop_per_tx_delta_pct",
@@ -1661,8 +1876,20 @@ fn label_for(id: &str) -> &'static str {
         "mac_drop_be_count" => "MAC BE Drops",
         "mac_drop_vo_count" => "MAC VO Drops",
         "mac_drop_unclassified_count" => "MAC Unclassified Drops",
+        "mac_drop_be_incorrect_rx_count" => "MAC BE Incorrect RX Drops",
+        "mac_drop_vo_incorrect_rx_count" => "MAC VO Incorrect RX Drops",
+        "mac_drop_be_queue_overflow_count" => "MAC BE Queue Overflow Drops",
+        "mac_drop_vo_queue_overflow_count" => "MAC VO Queue Overflow Drops",
+        "mac_drop_be_retry_limit_count" => "MAC BE Retry Limit Drops",
+        "mac_drop_vo_retry_limit_count" => "MAC VO Retry Limit Drops",
+        "mac_drop_be_congestion_count" => "MAC BE Congestion Drops",
+        "mac_drop_vo_congestion_count" => "MAC VO Congestion Drops",
         "mac_drop_vo_per_vo_tx" => "MAC VO Drops per Physical VO TX",
         "mac_drop_be_per_be_tx" => "MAC BE Drops per BE TX",
+        "mac_drop_vo_queue_overflow_per_vo_tx" => "MAC VO Queue Overflow per Physical VO TX",
+        "mac_drop_vo_incorrect_rx_per_vo_tx" => "MAC VO Incorrect RX per Physical VO TX",
+        "mac_drop_be_queue_overflow_per_be_tx" => "MAC BE Queue Overflow per BE TX",
+        "mac_drop_be_incorrect_rx_per_be_tx" => "MAC BE Incorrect RX per BE TX",
         "mac_drop_per_tx" => "MAC Drops per App TX",
         "be_dropped_while_blocked_count" => "BE Dropped While Blocked",
         "be_grant_suppressed_while_blocked_count" => "BE Grants Suppressed While Blocked",
@@ -1685,6 +1912,14 @@ fn label_for(id: &str) -> &'static str {
         "be_rx_per_tx_delta_pct" => "BE RX per TX Delta (%)",
         "mac_drop_delta_count" => "MAC Drop Delta",
         "mac_drop_delta_pct" => "MAC Drop Delta (%)",
+        "mac_drop_vo_incorrect_rx_delta_count" => "MAC VO Incorrect RX Delta",
+        "mac_drop_vo_incorrect_rx_delta_pct" => "MAC VO Incorrect RX Delta (%)",
+        "mac_drop_vo_queue_overflow_delta_count" => "MAC VO Queue Overflow Delta",
+        "mac_drop_vo_queue_overflow_delta_pct" => "MAC VO Queue Overflow Delta (%)",
+        "mac_drop_be_incorrect_rx_delta_count" => "MAC BE Incorrect RX Delta",
+        "mac_drop_be_incorrect_rx_delta_pct" => "MAC BE Incorrect RX Delta (%)",
+        "mac_drop_be_queue_overflow_delta_count" => "MAC BE Queue Overflow Delta",
+        "mac_drop_be_queue_overflow_delta_pct" => "MAC BE Queue Overflow Delta (%)",
         "mac_drop_per_tx_delta" => "MAC Drops per TX Delta",
         "mac_drop_per_tx_delta_pct" => "MAC Drops per TX Delta (%)",
         "be_dropped_while_blocked_delta_count" => "BE Dropped While Blocked Delta",
