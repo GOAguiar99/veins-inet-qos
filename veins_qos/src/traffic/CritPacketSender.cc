@@ -1,5 +1,6 @@
 #include "CritPacketSender.h"
 
+#include <fstream>
 #include <string>
 
 #include "inet/common/SequenceNumberTag_m.h"
@@ -45,6 +46,14 @@ int parseCrashSequenceFromName(const char *name)
     catch (...) {
         return -1;
     }
+}
+
+void agentDebugLog(const char *hypothesisId, const char *location, const char *message, const std::string& data)
+{
+    std::ofstream out("/home/goaguiar/master/master_veins/.cursor/debug-9574a1.log", std::ios::app);
+    out << "{\"sessionId\":\"9574a1\",\"runId\":\"pre-fix\",\"hypothesisId\":\"" << hypothesisId
+        << "\",\"location\":\"" << location << "\",\"message\":\"" << message
+        << "\",\"data\":{" << data << "},\"timestamp\":" << static_cast<long long>(omnetpp::simTime().dbl() * 1000) << "}\n";
 }
 } // namespace
 
@@ -155,6 +164,25 @@ void CritPacketSender::processPacket(std::shared_ptr<Packet> pk)
         seq = parseCrashSequenceFromName(pk->getName());
 
     const bool isSelfOrigin = !src.isUnspecified() && src == selfAddress;
+    const int nodeIndex = getParentModule()->getIndex();
+    const bool countedForKpi = !isSelfOrigin && (rxDscp == kDscpBe || rxDscp == kDscpVo);
+
+    if (nodeIndex == 1 && (rxDscp == kDscpBe || rxDscp == kDscpVo)) {
+        // #region agent log
+        agentDebugLog(
+            rxDscp == kDscpVo ? "H3,H5" : "H5",
+            "src/traffic/CritPacketSender.cc:processPacket",
+            "Application receive delay and KPI eligibility sample",
+            "\"nodeIndex\":" + std::to_string(nodeIndex) +
+                ",\"rxDscp\":" + std::to_string(rxDscp) +
+                ",\"sequence\":" + std::to_string(seq) +
+                ",\"delay\":" + std::to_string(delay.dbl()) +
+                ",\"hasCreationTime\":" + std::to_string(hasCreationTime ? 1 : 0) +
+                ",\"selfOrigin\":" + std::to_string(isSelfOrigin ? 1 : 0) +
+                ",\"countedForKpi\":" + std::to_string(countedForKpi ? 1 : 0) +
+                ",\"receiveTime\":" + std::to_string(simTime().dbl()));
+        // #endregion
+    }
 
     EV_INFO << "RX " << pk->getName()
             << " from " << src
