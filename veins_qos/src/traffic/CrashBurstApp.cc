@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "inet/common/SequenceNumberTag_m.h"
+#include "inet/common/TimeTag_m.h"
 #include "inet/common/packet/chunk/ByteCountChunk.h"
 #include "inet/networklayer/common/DscpTag_m.h"
 
@@ -15,6 +16,7 @@ Define_Module(CrashBurstApp);
 namespace {
 constexpr int kDscpVo = 46;
 const simsignal_t kVoTxPacketCountSignal = cComponent::registerSignal("voTxPacketCount");
+const simsignal_t kVoLogicalTxPacketCountSignal = cComponent::registerSignal("voLogicalTxPacketCount");
 } // namespace
 
 bool CrashBurstApp::startApplication()
@@ -138,6 +140,9 @@ void CrashBurstApp::scheduleNext(uint64_t myGen)
 
 void CrashBurstApp::sendBurst(uint64_t myGen, int sequenceNumber)
 {
+    const simtime_t logicalCreationTime = simTime();
+    emit(kVoLogicalTxPacketCountSignal, 1L);
+
     for (int i = 0; i < repeatCount; ++i) {
         simtime_t delay = repeatGap * i;
         if (repeatJitter > SIMTIME_ZERO) {
@@ -148,24 +153,26 @@ void CrashBurstApp::sendBurst(uint64_t myGen, int sequenceNumber)
         }
 
         timerManager.create(
-            veins::TimerSpecification([this, myGen, sequenceNumber, i]() {
+            veins::TimerSpecification([this, myGen, sequenceNumber, i, logicalCreationTime]() {
                 if (myGen != txGen || !crashActive)
                     return;
-                sendOne(sequenceNumber, i);
+                sendOne(sequenceNumber, i, logicalCreationTime);
             }).oneshotIn(delay)
         );
     }
 }
 
-void CrashBurstApp::sendOne(int sequenceNumber, int repeatIndex)
+void CrashBurstApp::sendOne(int sequenceNumber, int repeatIndex, simtime_t logicalCreationTime)
 {
     auto pk = createPacket((packetName + "_" + std::to_string(sequenceNumber) + "_r" + std::to_string(repeatIndex)).c_str());
 
     pk->addTagIfAbsent<DscpReq>()->setDifferentiatedServicesCodePoint(kDscpVo);
     pk->addTagIfAbsent<SequenceNumberReq>()->setSequenceNumber(sequenceNumber);
 
-    const auto payload = makeShared<ByteCountChunk>(B(payloadBytes));
-    timestampPayload(payload);
+    auto payload = makeShared<ByteCountChunk>(B(payloadBytes));
+    payload->removeTagIfPresent<CreationTimeTag>(b(0), b(-1));
+    auto creationTimeTag = payload->addTag<CreationTimeTag>();
+    creationTimeTag->setCreationTime(logicalCreationTime);
     pk->insertAtBack(payload);
 
     EV_INFO << "TX " << pk->getName()
@@ -173,6 +180,7 @@ void CrashBurstApp::sendOne(int sequenceNumber, int repeatIndex)
             << " dscp=" << kDscpVo
             << " seq=" << sequenceNumber
             << " rep=" << repeatIndex
+            << " logicalCreated=" << logicalCreationTime
             << " t=" << simTime()
             << endl;
 

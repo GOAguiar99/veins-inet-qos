@@ -8,7 +8,9 @@ simple CrashBurstApp extends VeinsInetApplicationBase
         @class(veins_qos::traffic::CrashBurstApp);
 
         @signal[voTxPacketCount](type=long);
+        @signal[voLogicalTxPacketCount](type=long);
         @statistic[voTxPackets](title="VO transmitted packets"; source=voTxPacketCount; record=count; interpolationmode=none);
+        @statistic[voLogicalTxPackets](title="VO logical crash sequences"; source=voLogicalTxPacketCount; record=count; interpolationmode=none);
 
         // only this OMNeT++ node index triggers crash behavior; -1 means all nodes
         int targetNodeIndex = default(0);

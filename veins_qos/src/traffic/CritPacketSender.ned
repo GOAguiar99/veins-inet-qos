@@ -32,6 +32,8 @@ simple CritPacketSender extends VeinsInetApplicationBase
 
         // packet naming (helps debugging)
         string packetName = default("tx");
+        // Positive values enable run-long VO repeat deduplication.
+        // Kept as a time parameter for legacy configs; entries are not expired mid-run.
         double voDedupWindow @unit(s) = default(200ms);
 
         @display("i=block/app");
