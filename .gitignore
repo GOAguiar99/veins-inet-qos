@@ -30,6 +30,9 @@ bin/
 obj/
 */obj/
 **/obj/
+target/
+*/target/
+**/target/
 Debug/
 Release/
 
