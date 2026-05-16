@@ -329,7 +329,8 @@ pub fn build_dashboard_response(
     let baseline_options = baseline_option_values(&dataset.config_summary);
     let (comparison_rows, baseline) =
         build_comparison_rows(&dataset.config_summary, requested_baseline);
-    let v2x_rows = build_v2x_variant_matrix(&dataset.config_summary);
+    let v2x_rows = build_v2x_variant_matrix(&dataset.config_summary, baseline.as_deref());
+    let v2x_columns = v2x_matrix_columns(&v2x_rows, baseline.as_deref());
 
     DashboardResponse {
         cache_info: dataset.cache_info.clone(),
@@ -354,7 +355,7 @@ pub fn build_dashboard_response(
             rows: sorted_run_rows(&dataset.run_rows),
         },
         v2x_matrix: Table {
-            columns: visible_columns(&v2x_rows, V2X_VARIANT_MATRIX_COLUMNS, &ALWAYS_VISIBLE),
+            columns: v2x_columns,
             rows: v2x_rows,
         },
     }
@@ -1177,7 +1178,10 @@ fn build_comparison_rows(
     (rows, Some(baseline))
 }
 
-fn build_v2x_variant_matrix(config_summary: &[ConfigSummary]) -> Vec<BTreeMap<String, Value>> {
+fn build_v2x_variant_matrix(
+    config_summary: &[ConfigSummary],
+    selected_baseline: Option<&str>,
+) -> Vec<BTreeMap<String, Value>> {
     const METRICS: &[(&str, &str, &str)] = &[
         ("Run", "Runs", "runs"),
         ("VO", "P95 delay (ms)", "vo_delay_p95_ms"),
@@ -1238,6 +1242,9 @@ fn build_v2x_variant_matrix(config_summary: &[ConfigSummary]) -> Vec<BTreeMap<St
                 .insert(variant, summary.clone());
         }
     }
+    let baseline_variant = selected_baseline
+        .and_then(|config| extract_matrix_variant_and_workload(config).map(|(variant, _)| variant))
+        .unwrap_or_else(|| "edca_only".to_string());
 
     let mut workloads: Vec<String> = by_workload.keys().cloned().collect();
     workloads.sort_by_key(|workload| workload_rank(workload));
@@ -1250,6 +1257,7 @@ fn build_v2x_variant_matrix(config_summary: &[ConfigSummary]) -> Vec<BTreeMap<St
             let stable = variant_metric(variants.get("stable"), metric_key);
             let guarded = variant_metric(variants.get("guarded"), metric_key);
             let emergency = variant_metric(variants.get("emergency"), metric_key);
+            let baseline_value = variant_metric(variants.get(&baseline_variant), metric_key);
 
             if metric_key != "runs"
                 && plain.is_none()
@@ -1292,33 +1300,33 @@ fn build_v2x_variant_matrix(config_summary: &[ConfigSummary]) -> Vec<BTreeMap<St
             );
             insert_string(
                 &mut row,
-                "stable_delta_vs_edca",
+                "stable_delta_vs_baseline",
                 &format_v2x_matrix_value(
                     metric_key,
                     (metric_key != "runs")
-                        .then(|| delta(stable, edca_only))
+                        .then(|| delta(stable, baseline_value))
                         .flatten(),
                     true,
                 ),
             );
             insert_string(
                 &mut row,
-                "guarded_delta_vs_edca",
+                "guarded_delta_vs_baseline",
                 &format_v2x_matrix_value(
                     metric_key,
                     (metric_key != "runs")
-                        .then(|| delta(guarded, edca_only))
+                        .then(|| delta(guarded, baseline_value))
                         .flatten(),
                     true,
                 ),
             );
             insert_string(
                 &mut row,
-                "emergency_delta_vs_edca",
+                "emergency_delta_vs_baseline",
                 &format_v2x_matrix_value(
                     metric_key,
                     (metric_key != "runs")
-                        .then(|| delta(emergency, edca_only))
+                        .then(|| delta(emergency, baseline_value))
                         .flatten(),
                     true,
                 ),
@@ -1950,10 +1958,43 @@ const V2X_VARIANT_MATRIX_COLUMNS: &[&str] = &[
     "stable",
     "guarded",
     "emergency",
-    "stable_delta_vs_edca",
-    "guarded_delta_vs_edca",
-    "emergency_delta_vs_edca",
+    "stable_delta_vs_baseline",
+    "guarded_delta_vs_baseline",
+    "emergency_delta_vs_baseline",
 ];
+
+fn v2x_matrix_columns(
+    rows: &[BTreeMap<String, Value>],
+    selected_baseline: Option<&str>,
+) -> Vec<Column> {
+    let baseline_label = selected_baseline
+        .and_then(|config| extract_matrix_variant_and_workload(config).map(|(variant, _)| variant))
+        .map(|variant| matrix_variant_label(&variant))
+        .unwrap_or("EDCA Only");
+    visible_columns(rows, V2X_VARIANT_MATRIX_COLUMNS, &ALWAYS_VISIBLE)
+        .into_iter()
+        .map(|mut column| {
+            column.label = match column.id.as_str() {
+                "stable_delta_vs_baseline" => format!("Stable Delta vs {baseline_label}"),
+                "guarded_delta_vs_baseline" => format!("Guarded Delta vs {baseline_label}"),
+                "emergency_delta_vs_baseline" => format!("Emergency Delta vs {baseline_label}"),
+                _ => column.label,
+            };
+            column
+        })
+        .collect()
+}
+
+fn matrix_variant_label(variant: &str) -> &'static str {
+    match variant {
+        "plain" => "Plain",
+        "edca_only" => "EDCA Only",
+        "stable" => "Stable",
+        "guarded" => "Guarded",
+        "emergency" => "Emergency",
+        _ => "Selected",
+    }
+}
 
 fn label_for(id: &str) -> &'static str {
     match id {
@@ -2045,9 +2086,9 @@ fn label_for(id: &str) -> &'static str {
         "emergency" => "Emergency",
         "plain" => "Plain",
         "edca_only" => "EDCA Only",
-        "stable_delta_vs_edca" => "Stable Delta vs EDCA",
-        "guarded_delta_vs_edca" => "Guarded Delta vs EDCA",
-        "emergency_delta_vs_edca" => "Emergency Delta vs EDCA",
+        "stable_delta_vs_baseline" => "Stable Delta",
+        "guarded_delta_vs_baseline" => "Guarded Delta",
+        "emergency_delta_vs_baseline" => "Emergency Delta",
         _ => "Metric",
     }
 }
