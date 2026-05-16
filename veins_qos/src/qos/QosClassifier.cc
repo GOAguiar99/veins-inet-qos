@@ -1,6 +1,8 @@
 #include "QosClassifier.h"
 
 #include <cstring>
+#include <fstream>
+#include <string>
 
 #include "inet/common/ProtocolTag_m.h"
 #include "inet/networklayer/common/DscpTag_m.h"
@@ -9,6 +11,16 @@
 namespace veins_qos::qos {
 
 Define_Module(QosClassifier);
+
+namespace {
+void agentDebugLog(const char *hypothesisId, const char *location, const char *message, const std::string& data)
+{
+    std::ofstream out("/home/goaguiar/master/master_veins/.cursor/debug-9574a1.log", std::ios::app);
+    out << "{\"sessionId\":\"9574a1\",\"runId\":\"pre-fix\",\"hypothesisId\":\"" << hypothesisId
+        << "\",\"location\":\"" << location << "\",\"message\":\"" << message
+        << "\",\"data\":{" << data << "},\"timestamp\":" << static_cast<long long>(omnetpp::simTime().dbl() * 1000) << "}\n";
+}
+} // namespace
 
 void QosClassifier::initialize()
 {
@@ -91,6 +103,22 @@ void QosClassifier::handleMessage(omnetpp::cMessage *msg)
     // This helps debugging downstream without changing already-present DSCP tags.
     if (dscp >= 0 && !pkt->hasTag<inet::DscpReq>() && !pkt->hasTag<inet::DscpInd>())
         pkt->addTagIfAbsent<inet::DscpReq>()->setDifferentiatedServicesCodePoint(dscp);
+
+    if (dscp == crashDscp) {
+        // #region agent log
+        agentDebugLog(
+            "H1",
+            "src/qos/QosClassifier.cc:handleMessage",
+            "DSCP to user priority classification for crash traffic",
+            "\"packetId\":" + std::to_string(pkt->getId()) +
+                ",\"dscp\":" + std::to_string(dscp) +
+                ",\"crashDscp\":" + std::to_string(crashDscp) +
+                ",\"oldUp\":" + std::to_string(oldUp) +
+                ",\"newUp\":" + std::to_string(up) +
+                ",\"isVoice\":" + std::to_string(up == inet::UP_VO ? 1 : 0) +
+                ",\"simTime\":" + std::to_string(omnetpp::simTime().dbl()));
+        // #endregion
+    }
 
     EV_INFO << "QoS classify pkt=" << pkt->getFullName()
             << " id=" << pkt->getId()
