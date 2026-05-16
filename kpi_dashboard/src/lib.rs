@@ -1178,56 +1178,60 @@ fn build_comparison_rows(
 }
 
 fn build_v2x_variant_matrix(config_summary: &[ConfigSummary]) -> Vec<BTreeMap<String, Value>> {
-    const METRICS: &[(&str, &str)] = &[
-        ("Runs", "runs"),
-        ("VO P95 Delay (ms)", "vo_delay_p95_ms"),
-        ("VO Mean Delay (ms)", "vo_delay_ms"),
-        ("VO Jitter (ms)", "vo_jitter_ms"),
-        ("VO RX per Logical TX", "vo_rx_per_tx"),
-        ("BE P95 Delay (ms)", "be_delay_p95_ms"),
-        ("BE Mean Delay (ms)", "be_delay_ms"),
-        ("BE Jitter (ms)", "be_jitter_ms"),
-        ("BE RX per TX", "be_rx_per_tx"),
-        ("MAC Total Drops", "mac_drop_sum_count"),
+    const METRICS: &[(&str, &str, &str)] = &[
+        ("Run", "Runs", "runs"),
+        ("VO", "P95 delay (ms)", "vo_delay_p95_ms"),
+        ("VO", "Mean delay (ms)", "vo_delay_ms"),
+        ("VO", "Jitter (ms)", "vo_jitter_ms"),
+        ("VO", "RX / logical TX", "vo_rx_per_tx"),
+        ("VO", "Incorrect RX drops", "mac_drop_vo_incorrect_rx_count"),
         (
-            "MAC VO Incorrect RX Drops",
-            "mac_drop_vo_incorrect_rx_count",
-        ),
-        (
-            "MAC VO Incorrect RX per Physical VO TX",
+            "VO",
+            "Incorrect RX / physical TX",
             "mac_drop_vo_incorrect_rx_per_vo_tx",
         ),
         (
-            "MAC VO Queue Overflow Drops",
+            "VO",
+            "Queue overflow drops",
             "mac_drop_vo_queue_overflow_count",
         ),
         (
-            "MAC VO Queue Overflow per Physical VO TX",
+            "VO",
+            "Queue overflow / physical TX",
             "mac_drop_vo_queue_overflow_per_vo_tx",
         ),
+        ("BE", "P95 delay (ms)", "be_delay_p95_ms"),
+        ("BE", "Mean delay (ms)", "be_delay_ms"),
+        ("BE", "Jitter (ms)", "be_jitter_ms"),
+        ("BE", "RX / TX", "be_rx_per_tx"),
+        ("BE", "Incorrect RX drops", "mac_drop_be_incorrect_rx_count"),
         (
-            "MAC BE Incorrect RX Drops",
-            "mac_drop_be_incorrect_rx_count",
-        ),
-        (
-            "MAC BE Queue Overflow Drops",
+            "BE",
+            "Queue overflow drops",
             "mac_drop_be_queue_overflow_count",
         ),
-        ("MAC Drops per TX", "mac_drop_per_tx"),
-        ("BE Dropped While Blocked", "be_dropped_while_blocked_count"),
+        ("MAC", "Total drops", "mac_drop_sum_count"),
+        ("MAC", "Drops / app TX", "mac_drop_per_tx"),
         (
-            "BE Grants Suppressed While Blocked",
+            "Control",
+            "BE dropped while blocked",
+            "be_dropped_while_blocked_count",
+        ),
+        (
+            "Control",
+            "BE grants suppressed",
             "be_grant_suppressed_while_blocked_count",
         ),
         (
-            "VO Protection Activations",
+            "Control",
+            "VO protection activations",
             "vo_protection_activation_count",
         ),
     ];
 
     let mut by_workload: BTreeMap<String, BTreeMap<String, ConfigSummary>> = BTreeMap::new();
     for summary in config_summary {
-        if let Some((variant, workload)) = extract_v2x_variant_and_workload(&summary.config) {
+        if let Some((variant, workload)) = extract_matrix_variant_and_workload(&summary.config) {
             by_workload
                 .entry(workload)
                 .or_default()
@@ -1240,34 +1244,130 @@ fn build_v2x_variant_matrix(config_summary: &[ConfigSummary]) -> Vec<BTreeMap<St
     let mut rows = Vec::new();
     for workload in workloads {
         let variants = by_workload.get(&workload).expect("workload exists");
-        for &(label, metric_key) in METRICS {
+        for &(group, label, metric_key) in METRICS {
+            let plain = variant_metric(variants.get("plain"), metric_key);
+            let edca_only = variant_metric(variants.get("edca_only"), metric_key);
             let stable = variant_metric(variants.get("stable"), metric_key);
             let guarded = variant_metric(variants.get("guarded"), metric_key);
             let emergency = variant_metric(variants.get("emergency"), metric_key);
+
+            if metric_key != "runs"
+                && plain.is_none()
+                && edca_only.is_none()
+                && stable.is_none()
+                && guarded.is_none()
+                && emergency.is_none()
+            {
+                continue;
+            }
+
             let mut row = BTreeMap::new();
             insert_string(&mut row, "workload", &workload);
+            insert_string(&mut row, "group", group);
             insert_string(&mut row, "metric", label);
-            insert_number(&mut row, "stable", stable);
-            insert_number(&mut row, "guarded", guarded);
-            insert_number(&mut row, "emergency", emergency);
-            insert_number(
+            insert_string(
                 &mut row,
-                "guarded_delta_vs_stable",
-                (metric_key != "runs")
-                    .then(|| delta(guarded, stable))
-                    .flatten(),
+                "plain",
+                &format_v2x_matrix_value(metric_key, plain, false),
             );
-            insert_number(
+            insert_string(
                 &mut row,
-                "emergency_delta_vs_stable",
-                (metric_key != "runs")
-                    .then(|| delta(emergency, stable))
-                    .flatten(),
+                "edca_only",
+                &format_v2x_matrix_value(metric_key, edca_only, false),
+            );
+            insert_string(
+                &mut row,
+                "stable",
+                &format_v2x_matrix_value(metric_key, stable, false),
+            );
+            insert_string(
+                &mut row,
+                "guarded",
+                &format_v2x_matrix_value(metric_key, guarded, false),
+            );
+            insert_string(
+                &mut row,
+                "emergency",
+                &format_v2x_matrix_value(metric_key, emergency, false),
+            );
+            insert_string(
+                &mut row,
+                "stable_delta_vs_edca",
+                &format_v2x_matrix_value(
+                    metric_key,
+                    (metric_key != "runs")
+                        .then(|| delta(stable, edca_only))
+                        .flatten(),
+                    true,
+                ),
+            );
+            insert_string(
+                &mut row,
+                "guarded_delta_vs_edca",
+                &format_v2x_matrix_value(
+                    metric_key,
+                    (metric_key != "runs")
+                        .then(|| delta(guarded, edca_only))
+                        .flatten(),
+                    true,
+                ),
+            );
+            insert_string(
+                &mut row,
+                "emergency_delta_vs_edca",
+                &format_v2x_matrix_value(
+                    metric_key,
+                    (metric_key != "runs")
+                        .then(|| delta(emergency, edca_only))
+                        .flatten(),
+                    true,
+                ),
             );
             rows.push(row);
         }
     }
     rows
+}
+
+fn format_v2x_matrix_value(metric_key: &str, value: Option<f64>, is_delta: bool) -> String {
+    let Some(value) = value.filter(|value| value.is_finite()) else {
+        return "N/A".to_string();
+    };
+
+    let decimals = if metric_key == "runs" || metric_key.ends_with("_count") {
+        0
+    } else if metric_key.ends_with("_ms") {
+        3
+    } else {
+        3
+    };
+    let formatted = format_number_pt(value, decimals);
+
+    if is_delta && value > 0.0 {
+        format!("+{formatted}")
+    } else {
+        formatted
+    }
+}
+
+fn format_number_pt(value: f64, decimals: usize) -> String {
+    let sign = if value.is_sign_negative() { "-" } else { "" };
+    let raw = format!("{:.*}", decimals, value.abs());
+    let (integer, fraction) = raw.split_once('.').unwrap_or((&raw, ""));
+    let mut grouped_reversed = String::new();
+    for (index, ch) in integer.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            grouped_reversed.push('.');
+        }
+        grouped_reversed.push(ch);
+    }
+    let grouped: String = grouped_reversed.chars().rev().collect();
+
+    if decimals == 0 {
+        format!("{sign}{grouped}")
+    } else {
+        format!("{sign}{grouped},{fraction}")
+    }
 }
 
 fn variant_metric(summary: Option<&ConfigSummary>, metric_key: &str) -> Option<f64> {
@@ -1640,7 +1740,14 @@ fn preferred_baseline(config_summary: &[ConfigSummary]) -> Option<String> {
     values.into_iter().next()
 }
 
-fn extract_v2x_variant_and_workload(config: &str) -> Option<(String, String)> {
+fn extract_matrix_variant_and_workload(config: &str) -> Option<(String, String)> {
+    if let Some(workload) = config.strip_prefix("plain_netload_") {
+        return Some(("plain".to_string(), workload.to_string()));
+    }
+    if let Some(workload) = config.strip_prefix("edca_only_netload_") {
+        return Some(("edca_only".to_string(), workload.to_string()));
+    }
+
     let rest = config.strip_prefix("edca_v2x_vo_")?;
     let (variant, workload) = rest.split_once("_netload_")?;
     matches!(variant, "stable" | "guarded" | "emergency")
@@ -1836,12 +1943,16 @@ const COMPARISON_COLUMNS: &[&str] = &[
 
 const V2X_VARIANT_MATRIX_COLUMNS: &[&str] = &[
     "workload",
+    "group",
     "metric",
+    "plain",
+    "edca_only",
     "stable",
     "guarded",
     "emergency",
-    "guarded_delta_vs_stable",
-    "emergency_delta_vs_stable",
+    "stable_delta_vs_edca",
+    "guarded_delta_vs_edca",
+    "emergency_delta_vs_edca",
 ];
 
 fn label_for(id: &str) -> &'static str {
@@ -1852,6 +1963,7 @@ fn label_for(id: &str) -> &'static str {
         "source_file" => "Source File",
         "baseline" => "Baseline",
         "workload" => "Workload",
+        "group" => "Group",
         "metric" => "Metric",
         "be_delay_ms" => "BE Mean Delay (ms)",
         "be_delay_min_ms" => "BE Min Delay (ms)",
@@ -1931,8 +2043,11 @@ fn label_for(id: &str) -> &'static str {
         "stable" => "Stable",
         "guarded" => "Guarded",
         "emergency" => "Emergency",
-        "guarded_delta_vs_stable" => "Guarded Delta vs Stable",
-        "emergency_delta_vs_stable" => "Emergency Delta vs Stable",
+        "plain" => "Plain",
+        "edca_only" => "EDCA Only",
+        "stable_delta_vs_edca" => "Stable Delta vs EDCA",
+        "guarded_delta_vs_edca" => "Guarded Delta vs EDCA",
+        "emergency_delta_vs_edca" => "Emergency Delta vs EDCA",
         _ => "Metric",
     }
 }
@@ -2138,7 +2253,7 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
   <script>
     const baseline = document.getElementById('baseline');
     const reloadButton = document.getElementById('reload');
-    const nf = new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 });
+    const nf = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 });
     let lastBaseline = '';
 
     reloadButton.addEventListener('click', loadDashboard);
@@ -2220,7 +2335,7 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
 
     function rawValue(value) {
       if (value === null || value === undefined) return 'N/A';
-      if (typeof value === 'number') return String(value);
+      if (typeof value === 'number') return nf.format(value);
       return String(value);
     }
 
