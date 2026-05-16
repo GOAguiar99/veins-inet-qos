@@ -54,3 +54,5 @@ results/
 # Secrets / local env files
 .env
 **/.env
+
+.cursor/
