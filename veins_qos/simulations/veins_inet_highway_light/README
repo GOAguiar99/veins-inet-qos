@@ -12,14 +12,15 @@ Veins+INET highway scenario with low vehicle density for the `veins_qos` study.
 - `edca_only`
 - `edca_v2x_vo_stable`
 - `edca_v2x_vo_guarded`
+- `edca_v2x_vo_emergency`
 
-The no-suffix configs use the deterministic medium application load.
+The no-suffix configs use the medium application load.
 
 ## Network Load Profiles
 
 Runnable config variants are available with `_netload_low`, `_netload_medium`, and `_netload_high` suffixes.
 
-Load profiles only change application traffic. BE intervals are deterministic so all MAC configs see the same offered load for each profile.
+Load profiles only change application traffic.
 
 - `low`: BE `500ms` with `200B`; crash VO `120ms`, `150B`, `repeatCount=3`
 - `medium`: BE `250ms` with `320B`; crash VO `75ms`, `180B`, `repeatCount=4`
@@ -47,17 +48,33 @@ cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_l
 ./run -u Cmdenv -c edca_v2x_vo_guarded_netload_high
 ```
 
-## Run The Full Light Matrix
+## Run A Compact Matrix
 
 ```bash
 cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_light
 ./run_matrix.sh
 ```
 
+By default this runs the `core` profile once:
+
+- `plain_netload_high`
+- `edca_only_netload_high`
+- `edca_v2x_vo_stable_netload_high`
+- `edca_v2x_vo_guarded_netload_high`
+- `edca_v2x_vo_emergency_netload_high`
+
 Optional overrides:
 
 ```bash
-RUNS=0..4 UI=Cmdenv EXTRA_ARGS="--sim-time-limit=100s" ./run_matrix.sh
+PROFILE=quick ./run_matrix.sh
+PROFILE=full RUNS=0..2 ./run_matrix.sh
+CONFIGS="plain_netload_high edca_v2x_vo_guarded_netload_high" RUNS=0 ./run_matrix.sh
 ```
 
-This runs all `12` configs for the light-density highway scenario.
+Profiles:
+
+- `quick`: 2 configs, one baseline and one guarded V2X run.
+- `core`: 5 high-load configs, one run each by default.
+- `full`: all 13 density-load variants; use only when you explicitly need the large sweep.
+
+The default simulation horizon is `70s`: crash starts at `30s`, lasts `30s`, and keeps a short post-crash tail. Result recording is compact by default: scalars plus only BE/VO delay vectors for P95/jitter.
