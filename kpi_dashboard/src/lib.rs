@@ -199,16 +199,31 @@ impl RebuildStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DensityOption {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardResponse {
     pub cache_info: CacheInfo,
     pub warnings: Vec<String>,
     pub rebuild: RebuildStatus,
+    pub density: String,
+    pub density_options: Vec<DensityOption>,
     pub baseline: Option<String>,
     pub baseline_options: Vec<String>,
     pub comparison: Table<BTreeMap<String, Value>>,
     pub config_summary: Table<ConfigSummary>,
     pub run_details: Table<RunRow>,
     pub v2x_matrix: Table<BTreeMap<String, Value>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResultsPackage {
+    pub id: String,
+    pub label: String,
+    pub path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -259,22 +274,84 @@ impl RunParseWarnings {
     }
 }
 
-pub fn default_results_dir() -> PathBuf {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let simulations_dir = root.join("..").join("veins_qos").join("simulations");
-    let heavy = simulations_dir
-        .join("veins_inet_highway_heavy")
-        .join("results");
-    let light = simulations_dir
-        .join("veins_inet_highway_light")
-        .join("results");
-    if heavy.exists() {
-        heavy
-    } else if light.exists() {
-        light
-    } else {
-        heavy
+pub fn simulations_results_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("veins_qos")
+        .join("simulations")
+}
+
+pub fn density_id_from_path(path: &Path) -> String {
+    for component in path.components().rev() {
+        let name = component.as_os_str().to_string_lossy();
+        if name.contains("highway_light") {
+            return "highway_light".to_string();
+        }
+        if name.contains("highway_heavy") {
+            return "highway_heavy".to_string();
+        }
     }
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "custom".to_string())
+}
+
+pub fn density_label(id: &str) -> String {
+    match id {
+        "highway_light" => "Highway light (10 vehicles)".to_string(),
+        "highway_heavy" => "Highway heavy (100 vehicles)".to_string(),
+        other => format!("Custom ({other})"),
+    }
+}
+
+/// Discover highway result packages. When `explicit` is set, only that directory is used.
+pub fn discover_results_packages(explicit: Option<PathBuf>) -> Vec<ResultsPackage> {
+    if let Some(path) = explicit {
+        let id = density_id_from_path(&path);
+        return vec![ResultsPackage {
+            label: density_label(&id),
+            id,
+            path,
+        }];
+    }
+
+    let simulations_dir = simulations_results_root();
+    let candidates = [
+        (
+            "veins_inet_highway_light",
+            "highway_light",
+            "Highway light (10 vehicles)",
+        ),
+        (
+            "veins_inet_highway_heavy",
+            "highway_heavy",
+            "Highway heavy (100 vehicles)",
+        ),
+    ];
+    let mut packages = Vec::new();
+    for (subdir, id, label) in candidates {
+        let path = simulations_dir.join(subdir).join("results");
+        if path.exists() {
+            packages.push(ResultsPackage {
+                id: id.to_string(),
+                label: label.to_string(),
+                path,
+            });
+        }
+    }
+    packages
+}
+
+pub fn default_results_dir() -> PathBuf {
+    discover_results_packages(None)
+        .first()
+        .map(|package| package.path.clone())
+        .unwrap_or_else(|| {
+            simulations_results_root()
+                .join("veins_inet_highway_heavy")
+                .join("results")
+        })
 }
 
 pub fn load_startup_dataset(
@@ -318,6 +395,8 @@ pub fn rebuild_raw_dataset(results_dir: &Path, threads: Option<usize>) -> Result
 
 pub fn build_dashboard_response(
     dataset: &DashboardDataset,
+    density: &str,
+    density_options: &[DensityOption],
     requested_baseline: &str,
     rebuild: RebuildStatus,
 ) -> DashboardResponse {
@@ -336,6 +415,8 @@ pub fn build_dashboard_response(
         cache_info: dataset.cache_info.clone(),
         warnings,
         rebuild,
+        density: density.to_string(),
+        density_options: density_options.to_vec(),
         baseline,
         baseline_options,
         comparison: Table {
@@ -2266,6 +2347,9 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
     <header>
       <h1>Veins QoS KPI Tables</h1>
       <div class="controls">
+        <label>Scenario
+          <select id="density"></select>
+        </label>
         <label>Baseline
           <select id="baseline"></select>
         </label>
@@ -2292,12 +2376,18 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
     </section>
   </main>
   <script>
+    const density = document.getElementById('density');
     const baseline = document.getElementById('baseline');
     const reloadButton = document.getElementById('reload');
     const nf = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 });
+    let lastDensity = '';
     let lastBaseline = '';
 
     reloadButton.addEventListener('click', loadDashboard);
+    density.addEventListener('change', () => {
+      lastDensity = density.value;
+      loadDashboard();
+    });
     baseline.addEventListener('change', () => {
       lastBaseline = baseline.value;
       loadDashboard();
@@ -2315,6 +2405,16 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
       warnings.innerHTML = (data.warnings || []).map((warning) =>
         `<div class="warning">${escapeHtml(warning)}</div>`
       ).join('');
+    }
+
+    function syncDensityOptions(data) {
+      const selected = data.density || lastDensity || '';
+      density.innerHTML = (data.density_options || []).map((option) => {
+        const isSelected = option.id === selected ? ' selected' : '';
+        return `<option value="${escapeHtml(option.id)}"${isSelected}>${escapeHtml(option.label)}</option>`;
+      }).join('');
+      if (selected && density.value !== selected) density.value = selected;
+      lastDensity = density.value || selected;
     }
 
     function syncBaselineOptions(data) {
@@ -2413,10 +2513,12 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
 
     async function loadDashboard() {
       const params = new URLSearchParams();
+      if (lastDensity) params.set('density', lastDensity);
       if (lastBaseline) params.set('baseline', lastBaseline);
       const response = await fetch(`/api/dashboard?${params.toString()}`, { cache: 'no-store' });
       const data = await response.json();
       renderStatus(data);
+      syncDensityOptions(data);
       syncBaselineOptions(data);
       renderTable('comparison', data.comparison);
       renderTable('config_summary', data.config_summary);
@@ -2531,6 +2633,14 @@ scalar Scenario.node[0].wlan[0].mac packetDropAcVoCount 2
     }
 
     #[test]
+    fn density_id_from_path_detects_highway_packages() {
+        let light = Path::new("/tmp/veins_inet_highway_light/results");
+        let heavy = Path::new("/tmp/veins_inet_highway_heavy/results");
+        assert_eq!(density_id_from_path(light), "highway_light");
+        assert_eq!(density_id_from_path(heavy), "highway_heavy");
+    }
+
+    #[test]
     fn builds_cache_and_serializes_nulls() {
         let dir = tempdir().unwrap();
         let results = dir.path();
@@ -2561,8 +2671,17 @@ scalar Scenario.node[0].wlan[0].mac packetDrop:count 0
             .warnings
             .iter()
             .any(|warning| warning.contains("headers but no samples")));
-        let response =
-            build_dashboard_response(&dataset, "plain_netload_high", RebuildStatus::idle());
+        let density_options = vec![DensityOption {
+            id: "custom".to_string(),
+            label: "Custom".to_string(),
+        }];
+        let response = build_dashboard_response(
+            &dataset,
+            "custom",
+            &density_options,
+            "plain_netload_high",
+            RebuildStatus::idle(),
+        );
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("null"));
         assert!(!json.contains("NaN"));

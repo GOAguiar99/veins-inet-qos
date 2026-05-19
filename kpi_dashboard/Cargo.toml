@@ -2,6 +2,7 @@
 name = "kpi_dashboard"
 version = "0.1.0"
 edition = "2021"
+default-run = "kpi_dashboard"
 
 [dependencies]
 anyhow = "1"

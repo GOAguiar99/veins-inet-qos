@@ -20,6 +20,8 @@ cargo test
 cargo run --release -- --rebuild
 ```
 
+For publication figures: `cargo run --release --bin export_figures -- ...`
+
 Open `http://127.0.0.1:8050`.
 
 ## Inputs
@@ -30,15 +32,20 @@ Open `http://127.0.0.1:8050`.
 | Vector results | `results/*.vec` |
 | Rust cache | `results/.kpi_cache_rs/` |
 
-Default `--results` directory: `veins_inet_highway_heavy/results` if it exists, else `highway_light/results`.
+By default the server discovers **both** highway packages when present:
 
-Pass an explicit path for a single study:
+- `veins_inet_highway_light/results` (10 vehicles)
+- `veins_inet_highway_heavy/results` (100 vehicles)
+
+Use the **Scenario** dropdown in the UI to switch between them. Light is listed first and selected by default when both exist.
+
+Pass `--results` to lock the dashboard to a single directory:
 
 ```bash
 cargo run --release -- --results ../veins_qos/simulations/veins_inet_highway_light/results
 ```
 
-The server loads **one** results directory per session. The exporter accepts **multiple** `--results` paths.
+The figure exporter accepts **multiple** `--results` paths in one command.
 
 ### CLI Options
 
