@@ -1,29 +1,24 @@
-Veins+INET square scenario package for the `veins_qos` study.
+# Legacy Square Scenario
 
-## What Is Here
+**Status:** Deprecated — not used in the current highway paper matrix.
 
-- `Scenario.ned`: OMNeT++ network.
-- `omnetpp.ini`: square experiment configs.
-- top-level scenario files: `square.launchd.xml`, `square.sumocfg`, `square.net.xml`, `square.rou.xml`, `square.poly.xml`, and `square.obstacles.xml`.
+## Purpose
 
-## Active Configs
+Dense square topology for early MAC/QoS validation. Same legacy V2X naming as [`veins_inet_highway`](../veins_inet_highway/README).
 
-- `plain`
-- `edca_only`
-- `edca_v2x`
+## Configs
 
-## How To Run
+`plain`, `edca_only`, `edca_v2x`, `edca_v2x_be_friendly` (deprecated), `edca_v2x_vo_protect` (deprecated).
 
-1. Start launch daemon:
+## Run
 
 ```bash
-cd /home/goaguiar/master/master_veins/veins/bin
-./veins_launchd -vv
-```
-
-2. Run simulation:
-
-```bash
-cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_square
+cd veins/bin && ./veins_launchd -vv
+cd veins_qos/simulations/veins_inet_square
 ./run -u Cmdenv -c edca_v2x
 ```
+
+## See Also
+
+- Active scenarios: `veins_inet_highway_{light,heavy}`
+- [`../../../docs/README_STANDARD.md`](../../../docs/README_STANDARD.md)

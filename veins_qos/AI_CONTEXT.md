@@ -42,8 +42,9 @@ Use this mental model when working in the repo:
 Supporting documentation and analysis tools:
 
 - `/README.md` for top-level quick start
-- `/kpi_dashboard/README.md` for KPI plotting and result comparison
-- `/uppaal/README.md` for formal verification workflow
+- `/kpi_dashboard/README.md` for KPI tables and publication figure export
+- `/AUDIT_REPORT.md` and `/REPOSITORY_MAP.md` for repository audit and structure
+- `/docs/README_STANDARD.md` for canonical terminology
 
 If there is any duplicate-looking project tree elsewhere, prefer the top-level `veins_qos/` directory as the authoritative source unless the user explicitly says otherwise.
 
@@ -99,16 +100,11 @@ The newer highway-density study now separates two dimensions cleanly:
 
 This separation is deliberate so traffic density and channel load can be stressed independently.
 
-In the default `omnetpp.ini`:
-- simulation time is `100s`
-- normal traffic uses `exponential(1s)` intervals and `100` byte payloads
-- crash traffic starts at `30s`
-- crash traffic continues for `30s`
-- crash traffic uses `100ms` intervals and `120` byte payloads
-- crash burst repeat settings:
-  - `repeatCount = 3`
-  - `repeatGap = 20ms`
-  - `repeatJitter = 5ms`
+In the active highway `omnetpp.ini` (`veins_inet_highway_light` / `veins_inet_highway_heavy`):
+- simulation time is `70s`
+- crash traffic starts at `30s` and lasts `30s` (`resumeAfter`)
+- default medium-like app parameters in `[General]`: BE `exponential(250ms)`, `320` B; VO `75ms`, `180` B, `repeatCount=4`
+- load overlays `_netload_*` override application rates (see scenario READMEs)
 
 The applications communicate via UDP multicast to `224.0.0.1` on `wlan0`.
 
@@ -221,9 +217,9 @@ Inside each package, application-side network load is exposed as explicit config
 
 For the density-study highway packages, the current load profiles are:
 
-- `low`: BE `exponential(1s)` with `120` byte payload; crash VO `150ms`, `repeatCount=2`
-- `medium`: BE `exponential(500ms)` with `200` byte payload; crash VO `100ms`, `repeatCount=3`
-- `high`: BE `exponential(250ms)` with `320` byte payload; crash VO `75ms`, `repeatCount=4`
+- `low`: BE `exponential(500ms)`, `200` B; crash VO `120ms`, `150` B, `repeatCount=3`
+- `medium`: BE `exponential(250ms)`, `320` B; crash VO `75ms`, `180` B, `repeatCount=4`
+- `high`: BE `exponential(125ms)`, `420` B; crash VO `20ms`, `260` B, `repeatCount=8`
 
 ### Configs in the active `omnetpp.ini`
 
@@ -244,7 +240,10 @@ Base MAC behavior configs:
   - uses the adaptive V2X MAC with a milder blocking profile
 - `edca_v2x_vo_guarded`
   - extends `edca_only`
-  - uses the same adaptive V2X MAC with a stronger VO-protection profile
+  - uses the same adaptive V2X MAC with shorter blocking windows
+- `edca_v2x_vo_emergency`
+  - extends `edca_only`
+  - `V2xHcf` with `emergencyPreemption=true`; drops/suppresses BE while VO protection is active
 
 Network-load overlays:
 
@@ -258,17 +257,15 @@ The active runnable matrix is the combination of those two dimensions:
 - `edca_only_netload_<low|medium|high>`
 - `edca_v2x_vo_stable_netload_<low|medium|high>`
 - `edca_v2x_vo_guarded_netload_<low|medium|high>`
+- `edca_v2x_vo_emergency_netload_<low|medium|high>`
 
-The current scenario-local matrix scripts focus on eight commonly used runs:
+`run_matrix.sh` profiles:
 
-- `plain_netload_high`
-- `edca_only_netload_high`
-- `edca_v2x_vo_stable_netload_low`
-- `edca_v2x_vo_stable_netload_medium`
-- `edca_v2x_vo_stable_netload_high`
-- `edca_v2x_vo_guarded_netload_low`
-- `edca_v2x_vo_guarded_netload_medium`
-- `edca_v2x_vo_guarded_netload_high`
+- `core` (default): five high-load configs — plain, edca_only, stable, guarded, emergency
+- `full`: all 15 policy × load combinations
+- `quick`: `plain_netload_high` and `edca_v2x_vo_guarded_netload_high`
+
+Legacy square/highway packages still define `edca_v2x_be_friendly` and `edca_v2x_vo_protect`; these are **deprecated** in favor of stable/guarded/emergency. Do not use them for the current highway paper matrix.
 
 ## Wireless and mobility assumptions
 

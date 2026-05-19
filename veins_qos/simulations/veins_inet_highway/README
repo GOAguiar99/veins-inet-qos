@@ -1,51 +1,33 @@
-Veins+INET highway scenario package for the `veins_qos` study.
+# Legacy Highway Scenario
 
-## What Is Here
+**Status:** Deprecated — use [`veins_inet_highway_light`](../veins_inet_highway_light/README) or [`veins_inet_highway_heavy`](../veins_inet_highway_heavy/README) for the paper.
 
-- `Scenario.ned`: OMNeT++ network.
-- `omnetpp.ini`: highway experiment configs.
-- top-level scenario files: `highway.launchd.xml`, `highway.sumocfg`, `highway.net.xml`, `highway.rou.xml`, and `highway.obstacles.xml`.
+## Purpose
 
-## Active Configs
+Original single-package highway with stochastic SUMO flows and older V2X config names. Kept for historical comparison only.
 
-- `plain`
-- `edca_only`
-- `edca_v2x`
+## Configs (legacy)
 
-Compatibility aliases are also available:
-- `highway_plain`
-- `highway_edca_only`
-- `highway_edca_v2x`
+| Config | Notes |
+|--------|-------|
+| `plain`, `edca_only` | Baselines |
+| `edca_v2x` | Base adaptive V2X (40 ms block, 250 ms cap) |
+| `edca_v2x_be_friendly` | **Deprecated** → use `edca_v2x_vo_stable` in active study |
+| `edca_v2x_vo_protect` | **Deprecated** → use `edca_v2x_vo_guarded` or `emergency` |
 
-## Density And Load Matrix
+Aliases `highway_plain`, `highway_edca_only`, `highway_edca_v2x` listed in older docs are **not** defined in current `omnetpp.ini`.
 
-For the newer two-axis highway study, use these scenario packages instead:
-
-- `veins_inet_highway_light`: low vehicle density (`10` total vehicles)
-- `veins_inet_highway_heavy`: high vehicle density (`100` total vehicles)
-
-Inside each of those packages, network load is varied independently with config suffixes:
-
-- `_netload_low`
-- `_netload_medium`
-- `_netload_high`
-
-Example runnable config:
-
-- `edca_v2x_vo_guarded_netload_high`
-
-## How To Run
-
-1. Start launch daemon:
+## Run
 
 ```bash
-cd /home/goaguiar/master/master_veins/veins/bin
-./veins_launchd -vv
-```
-
-2. Run simulation:
-
-```bash
-cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway
+cd veins/bin && ./veins_launchd -vv
+cd veins_qos/simulations/veins_inet_highway
 ./run -u Cmdenv -c edca_v2x
 ```
+
+Sim time: **100 s** (not 70 s). No `_netload_*` matrix.
+
+## See Also
+
+- Active study: [`../veins_inet_highway_light/README`](../veins_inet_highway_light/README)
+- Terminology: [`../../../docs/README_STANDARD.md`](../../../docs/README_STANDARD.md)

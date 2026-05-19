@@ -1,60 +1,60 @@
 # V2X MAC Notes
 
-This folder contains the custom MAC pieces used by the `edca_v2x` experiments.
+**Status:** Active — custom HCF and MAC instrumentation for the highway QoS study.
 
 ## Components
 
-- `V2xHcf`: custom HCF wrapper that decides when to suppress BE access requests.
-- `V2xEdcaFsmController`: small FSM that tracks V2X alert state and exposes whether BE must stay blocked.
-- `V2xIeee80211Mac`: instrumentation wrapper over `Ieee80211Mac` that records per-AC drop counters
-  (BK/BE/VI/VO/Unclassified) and per-AC per-reason drop scalars.
+| Module | Role |
+|--------|------|
+| `V2xHcf` | Adaptive HCF: VO-driven BE suppression; optional emergency BE drop |
+| `V2xEdcaFsmController` | FSM: `LISTENING`, `BLOCKING`, `SENDING` |
+| `V2xIeee80211Mac` | Wraps `Ieee80211Mac`; per-AC drop scalars |
 
-### MAC drop observability scalars
+## FSM States
 
-`V2xIeee80211Mac` records:
+| State | Value | BE behavior |
+|-------|-------|-------------|
+| `LISTENING` | 0 | Normal |
+| `BLOCKING` | 1 | BE channel requests suppressed |
+| `SENDING` | 2 | VO TX in progress; BE remains blocked |
 
-- Per AC totals:
-  - `packetDropAcBkCount`
-  - `packetDropAcBeCount`
-  - `packetDropAcViCount`
-  - `packetDropAcVoCount`
-  - `packetDropAcUnclassifiedCount`
-- Per AC and reason:
-  - `packetDropAc<Ac>Reason<Reason>Count`
-  - Example: `packetDropAcVoReasonRetryLimitReachedCount`
+## Trigger Logic
 
-## FSM states
+Protection extends on:
 
-- `LISTENING` (`0`): normal operation.
-- `BLOCKING` (`1`): BE should not request channel access.
-- `SENDING` (`2`): VO transmission is in progress; BE remains blocked.
+1. **Local VO demand** — upper-layer VO enqueued (`onVoDemandDetected`)
+2. **Overheard VO** — received VO-classified data frames (multicast-aware; not limited to unicast-to-self)
 
-BE is considered blocked while FSM is `BLOCKING` or `SENDING`.
+## Mode Comparison (active configs)
 
-## Trigger logic (current behavior)
+| Mode | `emergencyPreemption` | BE while blocked | Typical use |
+|------|----------------------|------------------|-------------|
+| stable | false | Suppress + retry | Mild protection |
+| guarded | false | Shorter block windows | Stricter timing |
+| emergency | true | Drop + suppress grants | Maximum VO protection |
 
-The alert/block window is extended by VO activity from both directions:
+## Tuning Knobs (`V2xHcf`)
 
-1. Local VO demand:
-- when upper-layer VO traffic is enqueued, `V2xHcf` calls `onVoDemandDetected(...)`.
+- `blockDuration` — extension per VO demand event
+- `maxContinuousBlock` — cap on one continuous alert period
+- `sendingGuardTimeout` — grace after VO TX transitions (FSM submodule)
+- `voQueueThreshold` — local VO queue depth to trigger alert
+- `emergencyPreemption` — drop new BE and suppress stale BE grants while blocking
 
-2. Received VO demand:
-- when this node receives a VO data frame addressed to itself, `V2xHcf::processLowerFrame(...)`
-  also calls `onVoDemandDetected(...)`.
+## MAC Drop Scalars (`V2xIeee80211Mac`)
 
-This keeps nodes in alert mode while crash-related VO traffic is still active around them.
+Per-AC totals: `packetDropAc{Bk,Be,Vi,Vo,Unclassified}Count`  
+Per-AC per-reason: e.g. `packetDropAcVoReasonRetryLimitReachedCount`
 
-## BE suppression policy
+## HCF Instrumentation (`V2xHcf`)
 
-- While FSM is blocking/sending, BE channel requests are suppressed.
-- If BE queue has packets, retries are deferred to `blockingUntil`.
-- Once alert ends, deferred BE requests are retried.
+- `beDroppedWhileBlockedCount`
+- `beGrantSuppressedWhileBlockedCount`
+- `voProtectionActivationCount`
 
-## Main tuning knobs
+Exported to KPI dashboard as fig_07 when non-zero.
 
-- `blockDuration`: base extension applied on each VO demand event.
-- `maxContinuousBlock`: hard cap for one continuous alert period (`<=0` disables cap).
-- `sendingGuardTimeout`: short grace period after VO transmit start/end transitions.
-- `voQueueThreshold`: local VO queue threshold to trigger alert from upper traffic.
+## See Also
 
-Use these knobs to balance VO protection and BE delay impact.
+- [`../../simulations/veins_inet_highway_light/README`](../../simulations/veins_inet_highway_light/README)
+- [`../../../docs/DEPRECATED_MODES.md`](../../../docs/DEPRECATED_MODES.md) — legacy `be_friendly` / `vo_protect`

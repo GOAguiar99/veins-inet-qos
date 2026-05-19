@@ -1,80 +1,76 @@
-Veins+INET highway scenario with low vehicle density for the `veins_qos` study.
+# Highway Light Density Study
 
-## What This Scenario Changes
+**Status:** Active — primary paper scenario (10 vehicles).
 
-- SUMO mobility stays in the highway corridor.
-- Vehicle density is light: `10` total vehicles (`node0` plus `9` background vehicles).
-- Network load is selected independently through OMNeT++ config names.
+## Research Question
 
-## Active MAC Configs
+Does crash VO traffic outperform ordinary BE under contention at **low vehicular density**, and how do DCF, EDCA, and adaptive V2X policies compare?
 
-- `plain`
-- `edca_only`
-- `edca_v2x_vo_stable`
-- `edca_v2x_vo_guarded`
-- `edca_v2x_vo_emergency`
+## Prerequisites
 
-The no-suffix configs use the medium application load.
+- Built `veins_qos` binary (`make` in `veins_qos/`)
+- `veins_launchd` on port 9999
 
-## Network Load Profiles
-
-Runnable config variants are available with `_netload_low`, `_netload_medium`, and `_netload_high` suffixes.
-
-Load profiles only change application traffic.
-
-- `low`: BE `500ms` with `200B`; crash VO `120ms`, `150B`, `repeatCount=3`
-- `medium`: BE `250ms` with `320B`; crash VO `75ms`, `180B`, `repeatCount=4`
-- `high`: BE `125ms` with `420B`; crash VO `50ms`, `220B`, `repeatCount=5`
-
-Examples:
-
-- `plain_netload_low`
-- `edca_only_netload_medium`
-- `edca_v2x_vo_guarded_netload_high`
-
-## How To Run
-
-1. Start launch daemon:
+## Quick Start
 
 ```bash
-cd /home/goaguiar/master/master_veins/veins/bin
-./veins_launchd -vv
+cd veins/bin && ./veins_launchd -vv
 ```
 
-2. Run a simulation:
-
 ```bash
-cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_light
+cd veins_qos/simulations/veins_inet_highway_light
 ./run -u Cmdenv -c edca_v2x_vo_guarded_netload_high
 ```
 
-## Run A Compact Matrix
+## Experiment Matrix
+
+| Profile | Configs | Default `RUNS` |
+|---------|---------|----------------|
+| `core` | 5 × high-load (all MAC policies) | `0` |
+| `full` | 15 × (5 policies × 3 loads) | `0` |
+| `quick` | plain + guarded high-load | `0` |
 
 ```bash
-cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_light
-./run_matrix.sh
+PROFILE=full RUNS=0..9 EXTRA_ARGS="--repeat=10" ./run_matrix.sh
 ```
 
-By default this runs the `core` profile once:
+### Runnable configs
 
-- `plain_netload_high`
-- `edca_only_netload_high`
-- `edca_v2x_vo_stable_netload_high`
-- `edca_v2x_vo_guarded_netload_high`
-- `edca_v2x_vo_emergency_netload_high`
+`plain_netload_{low,medium,high}`, `edca_only_netload_*`, `edca_v2x_vo_{stable,guarded,emergency}_netload_*`
 
-Optional overrides:
+Helper configs `_netload_*` alone are overlays — not meant to be run directly.
 
-```bash
-PROFILE=quick ./run_matrix.sh
-PROFILE=full RUNS=0..2 ./run_matrix.sh
-CONFIGS="plain_netload_high edca_v2x_vo_guarded_netload_high" RUNS=0 ./run_matrix.sh
-```
+## Simulation Parameters
 
-Profiles:
+| Parameter | Value |
+|-----------|-------|
+| Sim time | 70 s |
+| Vehicles | 10 (node0 + 9 background) |
+| Crash start / duration | 30 s / 30 s |
+| Multicast | `224.0.0.1` on `wlan0` |
+| Wireless | 802.11p-like, 5.9 GHz, 10 MHz |
 
-- `quick`: 2 configs, one baseline and one guarded V2X run.
-- `core`: 5 high-load configs, one run each by default.
-- `full`: all 13 density-load variants; use only when you explicitly need the large sweep.
+### Network load profiles (application only)
 
-The default simulation horizon is `70s`: crash starts at `30s`, lasts `30s`, and keeps a short post-crash tail. Result recording is compact by default: scalars plus only BE/VO delay vectors for P95/jitter.
+| Load | BE | Crash VO |
+|------|-----|----------|
+| low | `exp(500ms)`, 200 B | 120 ms, 150 B, repeat 3 |
+| medium | `exp(250ms)`, 320 B | 75 ms, 180 B, repeat 4 |
+| high | `exp(125ms)`, 420 B | 20 ms, 260 B, repeat 8 |
+
+## Packet and QoS Flow
+
+1. All nodes run `CritPacketSender` (BE, DSCP 0) and inactive `CrashBurstApp`.
+2. Node index **0** triggers crash at 30 s: TraCI stop + DSCP **46** VO bursts.
+3. EDCA configs use `QosClassifier` (46 → VO, else BE).
+4. V2X configs use `V2xHcf`: **stable** (mild block), **guarded** (short block), **emergency** (BE drop while protected).
+
+## Outputs
+
+- `results/*.sca`, `results/*.vec`
+- Analyze with [`kpi_dashboard`](../../../kpi_dashboard/README.md)
+
+## See Also
+
+- Heavy density: [`../veins_inet_highway_heavy/README`](../veins_inet_highway_heavy/README)
+- [`../../AI_CONTEXT.md`](../../AI_CONTEXT.md)

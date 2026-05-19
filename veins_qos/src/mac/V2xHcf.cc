@@ -1,8 +1,6 @@
 #include "mac/V2xHcf.h"
 
 #include <algorithm>
-#include <fstream>
-#include <string>
 
 #include "mac/V2xEdcaFsmController.h"
 #include "inet/common/Simsignals.h"
@@ -14,16 +12,6 @@ using namespace inet;
 using namespace inet::ieee80211;
 
 Define_Module(V2xHcf);
-
-namespace {
-void agentDebugLog(const char *hypothesisId, const char *location, const char *message, const std::string& data)
-{
-    std::ofstream out("/home/goaguiar/master/master_veins/.cursor/debug-9574a1.log", std::ios::app);
-    out << "{\"sessionId\":\"9574a1\",\"runId\":\"pre-fix\",\"hypothesisId\":\"" << hypothesisId
-        << "\",\"location\":\"" << location << "\",\"message\":\"" << message
-        << "\",\"data\":{" << data << "},\"timestamp\":" << static_cast<long long>(omnetpp::simTime().dbl() * 1000) << "}\n";
-}
-} // namespace
 
 V2xHcf::~V2xHcf()
 {
@@ -121,20 +109,7 @@ void V2xHcf::activateVoProtection(simtime_t duration)
 
     ++voProtectionActivationCount;
     emit(voProtectionActivationSignal, 1L);
-    const auto stateBefore = static_cast<int>(fsmController->getState());
     fsmController->onVoDemandDetected(duration);
-    // #region agent log
-    agentDebugLog(
-        "H2",
-        "src/mac/V2xHcf.cc:activateVoProtection",
-        "VO protection activation updated FSM state",
-        "\"duration\":" + std::to_string(duration.dbl()) +
-            ",\"stateBefore\":" + std::to_string(stateBefore) +
-            ",\"stateAfter\":" + std::to_string(static_cast<int>(fsmController->getState())) +
-            ",\"blockingUntil\":" + std::to_string(fsmController->getBlockingUntil().dbl()) +
-            ",\"activationCount\":" + std::to_string(voProtectionActivationCount) +
-            ",\"simTime\":" + std::to_string(simTime().dbl()));
-    // #endregion
 }
 
 void V2xHcf::dropBeWhileBlocked(Packet *packet)
@@ -213,24 +188,6 @@ void V2xHcf::processUpperFrame(Packet *packet, const Ptr<const Ieee80211DataOrMg
 
     auto pendingQueue = edca->getEdcaf(ac)->getPendingQueue();
     pendingQueue->enqueuePacket(packet);
-
-    if (ac == AccessCategory::AC_VO || (ac == AccessCategory::AC_BE && adaptiveBlocking && fsmController != nullptr && fsmController->isBeBlocked())) {
-        // #region agent log
-        agentDebugLog(
-            ac == AccessCategory::AC_VO ? "H2" : "H4",
-            "src/mac/V2xHcf.cc:processUpperFrame",
-            "Upper frame queued and channel access decision state",
-            "\"ac\":" + std::to_string(static_cast<int>(ac)) +
-                ",\"queuePackets\":" + std::to_string(pendingQueue->getNumPackets()) +
-                ",\"voQueuePackets\":" + std::to_string(edca->getEdcaf(AccessCategory::AC_VO)->getPendingQueue()->getNumPackets()) +
-                ",\"beQueuePackets\":" + std::to_string(edca->getEdcaf(AccessCategory::AC_BE)->getPendingQueue()->getNumPackets()) +
-                ",\"voQueueThreshold\":" + std::to_string(voQueueThreshold) +
-                ",\"adaptiveBlocking\":" + std::to_string(adaptiveBlocking ? 1 : 0) +
-                ",\"emergencyPreemption\":" + std::to_string(emergencyPreemption ? 1 : 0) +
-                ",\"beBlocked\":" + std::to_string(fsmController != nullptr && fsmController->isBeBlocked() ? 1 : 0) +
-                ",\"simTime\":" + std::to_string(simTime().dbl()));
-        // #endregion
-    }
 
     if (pendingQueue->isEmpty())
         return;

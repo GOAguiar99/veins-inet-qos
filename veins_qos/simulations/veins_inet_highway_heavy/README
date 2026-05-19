@@ -1,80 +1,58 @@
-Veins+INET highway scenario with high vehicle density for the `veins_qos` study.
+# Highway Heavy Density Study
 
-## What This Scenario Changes
+**Status:** Active — stress scenario (100 vehicles).
 
-- SUMO mobility stays in the highway corridor.
-- Vehicle density is heavy: `100` total vehicles (`node0` plus `99` background vehicles).
-- Network load is selected independently through OMNeT++ config names.
+## Research Question
 
-## Active MAC Configs
+Do conclusions from the light-density highway study hold under **high vehicular density** and stronger contention?
 
-- `plain`
-- `edca_only`
-- `edca_v2x_vo_stable`
-- `edca_v2x_vo_guarded`
-- `edca_v2x_vo_emergency`
+## Prerequisites
 
-The no-suffix configs use the medium application load.
+- Built `veins_qos` binary
+- `veins_launchd` on port 9999
 
-## Network Load Profiles
-
-Runnable config variants are available with `_netload_low`, `_netload_medium`, and `_netload_high` suffixes.
-
-Load profiles only change application traffic.
-
-- `low`: BE `500ms` with `200B`; crash VO `120ms`, `150B`, `repeatCount=3`
-- `medium`: BE `250ms` with `320B`; crash VO `75ms`, `180B`, `repeatCount=4`
-- `high`: BE `125ms` with `420B`; crash VO `50ms`, `220B`, `repeatCount=5`
-
-Examples:
-
-- `plain_netload_low`
-- `edca_only_netload_medium`
-- `edca_v2x_vo_guarded_netload_high`
-
-## How To Run
-
-1. Start launch daemon:
+## Quick Start
 
 ```bash
-cd /home/goaguiar/master/master_veins/veins/bin
-./veins_launchd -vv
+cd veins/bin && ./veins_launchd -vv
 ```
-
-2. Run a simulation:
 
 ```bash
-cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_heavy
-./run -u Cmdenv -c edca_v2x_vo_guarded_netload_high
+cd veins_qos/simulations/veins_inet_highway_heavy
+RUNS=0..4 EXTRA_ARGS="--repeat=5" ./run_matrix.sh
 ```
 
-## Run A Compact Matrix
+## Experiment Matrix
 
-```bash
-cd /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_heavy
-./run_matrix.sh
-```
+Same structure as highway light; only SUMO density changes (100 vehicles).
 
-By default this runs the `core` profile once:
+| Profile | Configs |
+|---------|---------|
+| `core` | Five high-load MAC policies |
+| `full` | All 15 policy × load combinations |
+| `quick` | Plain + guarded high-load |
 
-- `plain_netload_high`
-- `edca_only_netload_high`
-- `edca_v2x_vo_stable_netload_high`
-- `edca_v2x_vo_guarded_netload_high`
-- `edca_v2x_vo_emergency_netload_high`
+Runnable config names: `*_netload_{low,medium,high}` for plain, edca_only, stable, guarded, emergency.
 
-Optional overrides:
+## Simulation Parameters
 
-```bash
-PROFILE=quick ./run_matrix.sh
-PROFILE=full RUNS=0..2 ./run_matrix.sh
-CONFIGS="plain_netload_high edca_v2x_vo_guarded_netload_high" RUNS=0 ./run_matrix.sh
-```
+| Parameter | Value |
+|-----------|-------|
+| Sim time | 70 s |
+| Vehicles | 100 |
+| Crash window | 30 s – 60 s |
+| Load profiles | Same as light package (see light README table) |
 
-Profiles:
+## Packet and QoS Flow
 
-- `quick`: 2 configs, one baseline and one guarded V2X run.
-- `core`: 5 high-load configs, one run each by default.
-- `full`: all 13 density-load variants; use only when you explicitly need the large sweep.
+Identical application and MAC stack to `veins_inet_highway_light`; density affects mobility and contention only.
 
-The default simulation horizon is `70s`: crash starts at `30s`, lasts `30s`, and keeps a short post-crash tail. Result recording is compact by default: scalars plus only BE/VO delay vectors for P95/jitter.
+## Outputs
+
+- `results/` → `kpi_dashboard` / `export_figures`
+- Default dashboard looks here first when `results/` exists
+
+## See Also
+
+- [`../veins_inet_highway_light/README`](../veins_inet_highway_light/README)
+- [`../../AI_CONTEXT.md`](../../AI_CONTEXT.md)
