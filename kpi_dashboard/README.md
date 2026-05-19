@@ -1,6 +1,6 @@
 # Veins QoS KPI Dashboard
 
-Rust local dashboard for OMNeT++ KPI tables. The primary view is the comparison against a selected baseline, followed by config summaries and run-level details.
+Rust local dashboard and publication-figure exporter for OMNeT++ KPI analysis. The dashboard keeps the run tables auditable, while `export_figures` produces deterministic comparative figures for paper writing.
 
 ## Setup
 
@@ -48,6 +48,24 @@ Useful options:
 --port 8050
 ```
 
+## Publication Figures
+
+The scientific dashboard strategy and figure rationale are documented in [`SCIENTIFIC_DASHBOARD.md`](SCIENTIFIC_DASHBOARD.md).
+
+Export reproducible figures from collected simulation results:
+
+```bash
+cd /home/goaguiar/master/master_veins/kpi_dashboard
+cargo run --release --bin export_figures -- \
+  --results ../veins_qos/simulations/veins_inet_highway_light/results \
+  --results ../veins_qos/simulations/veins_inet_highway_heavy/results \
+  --output publication_figures \
+  --formats svg,png,pdf \
+  --dpi 300
+```
+
+SVG is always generated. PNG/PDF export is attempted through `rsvg-convert` or `inkscape` when either converter is installed.
+
 ## Cache
 
 The Rust cache is written under each selected result directory:
@@ -77,3 +95,13 @@ Missing values are emitted as JSON `null` and displayed as `N/A`. The dashboard 
 - `VO physical TX`: repeated physical VO transmissions.
 - `MAC drops`: total MAC drops plus BE, VO, unclassified, queue-overflow, retry-limit, and normalized drop-rate views when the scalars are present.
 - `BE dropped while blocked`, `BE grants suppressed`, and `VO protection activations`: V2X HCF instrumentation counters when available.
+
+## Exported Figure Set
+
+- `fig_01_p95_delay_priority_gap_<density>`: BE vs VO P95 delay under high load.
+- `fig_02_mac_drop_rate_by_strategy_load_<density>`: normalized MAC drop heatmap.
+- `fig_03_vo_reception_by_strategy_load_<density>`: VO reception heatmap.
+- `fig_04_latency_jitter_tradeoff_<density>`: delay/jitter scatter by access category.
+- `fig_05_mac_drop_attribution_high_load_<density>`: high-load drop attribution.
+- `fig_06_vo_delay_cdf_high_load_<density>`: high-load empirical VO delay CDF when vector samples exist.
+- `fig_07_v2x_control_actions_by_load_<density>`: adaptive-control counters when V2X HCF metrics exist.

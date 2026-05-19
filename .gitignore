@@ -27,6 +27,8 @@ build/
 bin/
 */bin/
 **/bin/
+!kpi_dashboard/src/bin/
+!kpi_dashboard/src/bin/export_figures.rs
 obj/
 */obj/
 **/obj/
