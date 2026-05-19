@@ -2,7 +2,11 @@
 
 This dashboard is intended to support paper-quality analysis of the Veins QoS experiments, not only run monitoring. The central comparison is ordinary BE traffic versus crash-triggered VO traffic under DCF, default EDCA, and tuned V2X EDCA variants.
 
-## Dashboard Organization
+## Interactive UI (implemented)
+
+The Rust server at `http://127.0.0.1:8050` currently exposes **four auditable tables** (comparison, config summary, run details, V2X matrix) plus cache/rebuild status. Sections 1–6 below describe the **analytical lens** for interpretation and map to exported figures — they are not separate UI tabs.
+
+## Analytical Lenses
 
 1. **Research Summary**
    - High-level KPIs for the selected result set: run count, strategy coverage, workload coverage, and cache provenance.
@@ -60,6 +64,7 @@ These figures are intentionally comparative. Raw run tables remain available for
 ## Metric Treatment
 
 - Use **P95** delay as the default tail-latency figure. Add P99 only when enough vector samples exist to make it stable.
+- P95 and jitter in the dashboard/exporter are computed from **`Scenario.node[0].app[0]`** vector streams; scalar delay means aggregate all nodes.
 - Use **P50/P95/P99** in text or supplementary tables when discussing delay distributions.
 - Use **mean absolute jitter** to summarize short-term delay variability; interpret it alongside delay, not as a standalone quality score.
 - Use **RX per TX** for multicast reception because one transmission can produce multiple receptions.

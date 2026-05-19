@@ -1,7 +1,6 @@
 #include "CrashBurstApp.h"
 
 #include <algorithm>
-#include <fstream>
 #include <string>
 
 #include "inet/common/SequenceNumberTag_m.h"
@@ -20,13 +19,6 @@ constexpr int kDscpVo = 46;
 const simsignal_t kVoTxPacketCountSignal = cComponent::registerSignal("voTxPacketCount");
 const simsignal_t kVoLogicalTxPacketCountSignal = cComponent::registerSignal("voLogicalTxPacketCount");
 
-void agentDebugLog(const char *hypothesisId, const char *location, const char *message, const std::string& data)
-{
-    std::ofstream out("/home/goaguiar/master/master_veins/.cursor/debug-9574a1.log", std::ios::app);
-    out << "{\"sessionId\":\"9574a1\",\"runId\":\"pre-fix\",\"hypothesisId\":\"" << hypothesisId
-        << "\",\"location\":\"" << location << "\",\"message\":\"" << message
-        << "\",\"data\":{" << data << "},\"timestamp\":" << static_cast<long long>(omnetpp::simTime().dbl() * 1000) << "}\n";
-}
 } // namespace
 
 bool CrashBurstApp::startApplication()
@@ -193,20 +185,6 @@ void CrashBurstApp::sendOne(int sequenceNumber, int repeatIndex, simtime_t logic
             << " logicalCreated=" << logicalCreationTime
             << " t=" << simTime()
             << endl;
-
-    // #region agent log
-    agentDebugLog(
-        "H3",
-        "src/traffic/CrashBurstApp.cc:sendOne",
-        "VO repeat send timing before network transmit",
-        "\"sequence\":" + std::to_string(sequenceNumber) +
-            ",\"repeatIndex\":" + std::to_string(repeatIndex) +
-            ",\"logicalCreationTime\":" + std::to_string(logicalCreationTime.dbl()) +
-            ",\"sendTime\":" + std::to_string(simTime().dbl()) +
-            ",\"repeatSchedulingDelay\":" + std::to_string((simTime() - logicalCreationTime).dbl()) +
-            ",\"repeatGap\":" + std::to_string(repeatGap.dbl()) +
-            ",\"payloadBytes\":" + std::to_string(payloadBytes));
-    // #endregion
 
     sendPacket(std::move(pk));
     emit(kVoTxPacketCountSignal, 1L);

@@ -90,8 +90,12 @@ fn main() -> Result<()> {
         });
         let figures = build_figures(&dataset, &samples, args.width, args.height);
 
-        for (index, figure) in figures.into_iter().enumerate() {
-            let base_name = format!("fig_{:02}_{}_{}", index + 1, figure.slug, density);
+        for figure in figures {
+            let Some(order) = figure_order(figure.slug) else {
+                eprintln!("warning: unknown figure slug {}, skipping", figure.slug);
+                continue;
+            };
+            let base_name = format!("fig_{:02}_{}_{}", order, figure.slug, density);
             let svg_path = args.output.join(format!("{base_name}.svg"));
             write_svg(&svg_path, args.width, args.height, &figure)?;
             if formats.png {
@@ -171,7 +175,7 @@ fn p95_priority_gap_figure(
         .flat_map(|(_, be, vo)| [*be, *vo])
         .fold(0.0, f64::max);
     let plot = PlotArea::new(width, height);
-    let mut svg = axis_frame(&plot, "P95 delay (ms)", "MAC strategy");
+    let mut svg = axis_frame(&plot, "MAC strategy", "P95 delay (ms)");
     draw_y_ticks(&mut svg, &plot, max_value);
     let group_width = plot.inner_w / rows.len() as f64;
     let bar_width = group_width * 0.26;
@@ -478,7 +482,7 @@ fn control_actions_figure(
         .flat_map(|(_, _, protection, suppressed)| [*protection, *suppressed])
         .fold(0.0, f64::max);
     let plot = PlotArea::new(width, height);
-    let mut svg = axis_frame(&plot, "Control events (count)", "Strategy/load");
+    let mut svg = axis_frame(&plot, "Strategy/load", "Control events (count)");
     draw_y_ticks(&mut svg, &plot, max_value);
     let group_width = plot.inner_w / rows.len() as f64;
     let bar_width = group_width * 0.24;
@@ -946,6 +950,19 @@ fn format_metric(value: f64) -> String {
     }
 }
 
+fn figure_order(slug: &str) -> Option<u8> {
+    match slug {
+        "p95_delay_priority_gap" => Some(1),
+        "mac_drop_rate_by_strategy_load" => Some(2),
+        "vo_reception_by_strategy_load" => Some(3),
+        "latency_jitter_tradeoff" => Some(4),
+        "mac_drop_attribution_high_load" => Some(5),
+        "vo_delay_cdf_high_load" => Some(6),
+        "v2x_control_actions_by_load" => Some(7),
+        _ => None,
+    }
+}
+
 fn strategy_label(strategy: &str) -> &'static str {
     match strategy {
         "plain" => "DCF",
@@ -1098,5 +1115,17 @@ impl ExportFormats {
             }
         }
         formats
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::figure_order;
+
+    #[test]
+    fn figure_order_is_stable_by_slug() {
+        assert_eq!(figure_order("p95_delay_priority_gap"), Some(1));
+        assert_eq!(figure_order("v2x_control_actions_by_load"), Some(7));
+        assert_eq!(figure_order("unknown_slug"), None);
     }
 }

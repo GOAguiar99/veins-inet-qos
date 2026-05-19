@@ -1,61 +1,66 @@
 # Veins QoS KPI Dashboard
 
-Rust local dashboard and publication-figure exporter for OMNeT++ KPI analysis. The dashboard keeps the run tables auditable, while `export_figures` produces deterministic comparative figures for paper writing.
+**Status:** Active — Rust parser, local audit tables, and publication figure exporter.
 
-## Setup
+## Purpose
 
-Install Rust with `cargo` available on `PATH`.
+Parse OMNeT++ `.sca` / `.vec` results from the highway density study, expose auditable comparison tables, and export deterministic SVG-first figures for the paper.
 
-From this directory:
+## Prerequisites
+
+- Rust (`cargo` on `PATH`)
+- Simulation results under `veins_qos/simulations/veins_inet_highway_*/results/`
+- Optional: `rsvg-convert` or `inkscape` for PNG/PDF conversion
+
+## Quick Start
 
 ```bash
-cd /home/goaguiar/master/master_veins/kpi_dashboard
+cd kpi_dashboard
 cargo test
+cargo run --release -- --rebuild
 ```
 
-## Run
+Open `http://127.0.0.1:8050`.
 
-Default result lookup checks these folders in order:
+## Inputs
 
-- `../veins_qos/simulations/veins_inet_highway_heavy/results`
-- `../veins_qos/simulations/veins_inet_highway_light/results`
+| Input | Location |
+|-------|----------|
+| Scalar results | `results/*.sca` |
+| Vector results | `results/*.vec` |
+| Rust cache | `results/.kpi_cache_rs/` |
+
+Default `--results` directory: `veins_inet_highway_heavy/results` if it exists, else `highway_light/results`.
+
+Pass an explicit path for a single study:
 
 ```bash
-cd /home/goaguiar/master/master_veins/kpi_dashboard
-cargo run --release
+cargo run --release -- --results ../veins_qos/simulations/veins_inet_highway_light/results
 ```
 
-Open:
+The server loads **one** results directory per session. The exporter accepts **multiple** `--results` paths.
 
-```text
-http://127.0.0.1:8050
-```
+### CLI Options
 
-Custom result directory:
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--baseline` | `plain_netload_high` | Comparison reference config |
+| `--rebuild` | off | Force re-parse from raw files |
+| `--threads` | auto | Parser parallelism |
+| `--host` / `--port` | `127.0.0.1:8050` | HTTP bind |
+
+## Outputs
+
+### Interactive tables
+
+- **Comparison vs Baseline** — deltas vs selected baseline (high-load configs preferred)
+- **Config Summary** — arithmetic mean per config over runs
+- **Run Details** — one row per result file
+- **V2X Mode Matrix** — stable / guarded / emergency × workload (when present)
+
+### Publication figures
 
 ```bash
-cargo run --release -- \
-  --results /home/goaguiar/master/master_veins/veins_qos/simulations/veins_inet_highway_heavy/results
-```
-
-Useful options:
-
-```text
---baseline plain_netload_high
---rebuild
---threads 4
---host 127.0.0.1
---port 8050
-```
-
-## Publication Figures
-
-The scientific dashboard strategy and figure rationale are documented in [`SCIENTIFIC_DASHBOARD.md`](SCIENTIFIC_DASHBOARD.md).
-
-Export reproducible figures from collected simulation results:
-
-```bash
-cd /home/goaguiar/master/master_veins/kpi_dashboard
 cargo run --release --bin export_figures -- \
   --results ../veins_qos/simulations/veins_inet_highway_light/results \
   --results ../veins_qos/simulations/veins_inet_highway_heavy/results \
@@ -64,44 +69,64 @@ cargo run --release --bin export_figures -- \
   --dpi 300
 ```
 
-SVG is always generated. PNG/PDF export is attempted through `rsvg-convert` or `inkscape` when either converter is installed.
+Naming: `fig_{01..07}_{slug}_{highway_light|highway_heavy}.{ext}`
 
-## Cache
+See [`SCIENTIFIC_DASHBOARD.md`](SCIENTIFIC_DASHBOARD.md) for figure rationale.
 
-The Rust cache is written under each selected result directory:
+## Cache and Reproducibility
 
-- `results/.kpi_cache_rs/meta.json`
-- `results/.kpi_cache_rs/run_rows.json`
-- `results/.kpi_cache_rs/config_summary.json`
+| File | Role |
+|------|------|
+| `meta.json` | `schema_version`, `parser_version` (`rust-kpi-dashboard-0.2.0`), file signatures |
+| `run_rows.json` | Per-run metrics |
+| `config_summary.json` | Per-config means |
 
-When no valid Rust cache exists, the dashboard builds it from raw `.sca` and `.vec` files. Use `--rebuild` to force a fresh parse.
+Cache invalidates when parser version, schema, or source file name/size/mtime changes.
 
-## Tables
+**Note:** `export_figures` always re-parses raw files (and refreshes cache); it does not skip parsing for speed.
 
-- `Comparison vs Baseline`: primary table with absolute values plus delta and percent delta against the baseline.
-- `Config Summary`: averaged row per config.
-- `Run Details`: one row per OMNeT++ run/result file.
-- `V2X Mode Matrix`: stable, guarded, and emergency V2X modes side by side when those configs exist.
+Before analyzing a new experiment batch, clear or archive incompatible `results/` (see top-level [`README.md`](../README.md)).
 
-Missing values are emitted as JSON `null` and displayed as `N/A`. The dashboard does not fabricate P95 or jitter values; those require vector samples in the `.vec` files.
+## Metric Definitions
 
-## KPI Definitions
+| Metric | Definition | Caveat |
+|--------|------------|--------|
+| BE/VO mean delay | Weighted mean from scalar `:mean` × `:count` | Aggregates all `app[0]` modules |
+| BE/VO P95 delay | 95th percentile from delay vectors | **`Scenario.node[0].app[0]` only** |
+| BE/VO jitter | Mean \|Δdelay\| on consecutive vector samples | Same node[0] scope as P95 |
+| VO logical TX | `voLogicalTxPackets:count` if &gt; 0, else physical | Per crash burst sequence |
+| VO physical TX | `voTxPackets:count` | Includes `repeatCount` replicas |
+| VO / BE RX per TX | Receptions per transmission | Multicast semantics |
+| MAC drops / per TX | MAC + normalized drop rate | Attribution heuristic when AC sums ≈ 2× total |
+| V2X counters | Protection activations, BE suppressed/dropped | V2X configs only |
 
-- `BE/VO mean delay`: weighted mean from OMNeT++ scalar delay means and counts.
-- `BE/VO P95 delay`: exact 95th percentile from recorded delay vector samples.
-- `BE/VO jitter`: mean absolute change between consecutive packet delays per receiver stream.
-- `RX per TX`: receptions per transmission, used because these runs are multicast.
-- `VO logical TX`: deduplicated crash-event transmissions when available.
-- `VO physical TX`: repeated physical VO transmissions.
-- `MAC drops`: total MAC drops plus BE, VO, unclassified, queue-overflow, retry-limit, and normalized drop-rate views when the scalars are present.
-- `BE dropped while blocked`, `BE grants suppressed`, and `VO protection activations`: V2X HCF instrumentation counters when available.
+Missing data → JSON `null` / UI `N/A` (no fabrication).
 
-## Exported Figure Set
+## Figure Catalog
 
-- `fig_01_p95_delay_priority_gap_<density>`: BE vs VO P95 delay under high load.
-- `fig_02_mac_drop_rate_by_strategy_load_<density>`: normalized MAC drop heatmap.
-- `fig_03_vo_reception_by_strategy_load_<density>`: VO reception heatmap.
-- `fig_04_latency_jitter_tradeoff_<density>`: delay/jitter scatter by access category.
-- `fig_05_mac_drop_attribution_high_load_<density>`: high-load drop attribution.
-- `fig_06_vo_delay_cdf_high_load_<density>`: high-load empirical VO delay CDF when vector samples exist.
-- `fig_07_v2x_control_actions_by_load_<density>`: adaptive-control counters when V2X HCF metrics exist.
+| ID | Slug | Content |
+|----|------|---------|
+| 01 | `p95_delay_priority_gap` | BE vs VO P95 at high load |
+| 02 | `mac_drop_rate_by_strategy_load` | Drop rate heatmap |
+| 03 | `vo_reception_by_strategy_load` | VO RX per logical TX heatmap |
+| 04 | `latency_jitter_tradeoff` | Mean delay vs jitter scatter |
+| 05 | `mac_drop_attribution_high_load` | BE/VO/unclassified drops |
+| 06 | `vo_delay_cdf_high_load` | Empirical VO delay CDF |
+| 07 | `v2x_control_actions_by_load` | V2X control counters |
+
+Figures are **omitted** when required metrics or samples are absent.
+
+## Troubleshooting
+
+| Symptom | Action |
+|---------|--------|
+| P95 / jitter always N/A | Ensure `.vec` exists; vectors recorded in `omnetpp.ini` |
+| Unexpected averages | Check for mixed old/new results in `results/` |
+| Missing fig_07 on light density | V2X counters may be zero — expected if no V2X runs |
+| PNG/PDF missing | Install `rsvg-convert` or `inkscape`; SVG remains canonical |
+
+## See Also
+
+- [`SCIENTIFIC_DASHBOARD.md`](SCIENTIFIC_DASHBOARD.md)
+- [`../docs/PUBLICATION_CHECKLIST.md`](../docs/PUBLICATION_CHECKLIST.md)
+- [`../AUDIT_REPORT.md`](../AUDIT_REPORT.md)
