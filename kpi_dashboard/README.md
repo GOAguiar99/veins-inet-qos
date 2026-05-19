@@ -20,7 +20,7 @@ cargo test
 cargo run --release -- --rebuild
 ```
 
-For publication figures: `cargo run --release --bin export_figures -- ...`
+For publication figures, see [Publication figures](#publication-figures) below (do not pass literal `...`).
 
 Open `http://127.0.0.1:8050`.
 
