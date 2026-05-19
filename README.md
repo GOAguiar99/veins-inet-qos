@@ -1,6 +1,6 @@
 # Crash-Aware Vehicular QoS Workspace
 
-**Status:** Active research workspace (master's project / ETFA paper reproduction)
+**Status:** Active research workspace (master's project)
 
 ## Research Question
 
