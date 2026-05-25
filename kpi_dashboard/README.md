@@ -76,6 +76,22 @@ cargo run --release --bin export_figures -- \
   --dpi 300
 ```
 
+Export only specific figures (faster when you need one plot):
+
+```bash
+cargo run --release --bin export_figures -- --list-figures
+
+cargo run --release --bin export_figures -- \
+  --results ../veins_qos/simulations/veins_inet_highway_heavy/results \
+  --output ../../ETFA-2026---Paper/figures/eval \
+  --figures 06 \
+  --formats svg,pdf
+```
+
+`--figures` accepts numeric ids (`06`), `fig_06`, or slugs (`vo_delay_cdf_high_load`). Repeat the flag for multiple figures. Omit it to export all figures that have data.
+
+Fig. 06 only reads **high-load VO** `.vec` files (not all 45 runs), subsamples per run, and prints progress on stderr. PDFs are written via `rsvg-convert -f pdf1.4` (tight SVG canvas, no extra crop flags).
+
 By default figures use the **publication** preset (720×480 px, readable fonts, legend in a dedicated footer band below the plot). Pass `--ieee` for the compact 252 px single-column layout. Use `--no-ieee` explicitly or omit `--ieee` for publication exports.
 
 Naming: `fig_{01..07}_{slug}_{highway_light|highway_heavy}.{ext}`

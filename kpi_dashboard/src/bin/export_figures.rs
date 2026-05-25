@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -26,8 +26,23 @@ const DEFAULT_PUB_WIDTH: u32 = 720;
 const DEFAULT_PUB_HEIGHT: u32 = 480;
 const DEFAULT_PUB_HEIGHT_TALL: u32 = 640;
 const CDF_MAX_POINTS: usize = 150;
+/// VO delay CDF x-axis upper bound (ms); delays beyond this plot at the right edge.
+const VO_DELAY_CDF_X_MAX_MS: f64 = 3.0;
+const CDF_LEGEND_HORIZONTAL_GAP: f64 = 24.0;
+/// Max VO delay samples kept per .vec run (reservoir); enough for a stable CDF curve.
+const CDF_VEC_SAMPLE_CAP: usize = 4_000;
 const MIN_BAR_HEIGHT: f64 = 1.0;
 const V2X_STRATEGIES: &[&str] = &["stable", "guarded", "emergency"];
+
+const FIGURE_CATALOG: &[(&str, u8)] = &[
+    ("p95_delay_priority_gap", 1),
+    ("mac_drop_rate_by_strategy_load", 2),
+    ("vo_reception_by_strategy_load", 3),
+    ("latency_jitter_tradeoff", 4),
+    ("mac_drop_attribution_high_load", 5),
+    ("vo_delay_cdf_high_load", 6),
+    ("v2x_control_actions_by_load", 7),
+];
 
 /// Layout presets for exported SVG/PDF figures.
 #[derive(Debug, Clone, Copy)]
@@ -47,14 +62,6 @@ struct FigureStyle {
     axis_stroke: f64,
     line_stroke: f64,
     tick_count: u32,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum LegendCorner {
-    TopRight,
-    BottomRight,
-    BottomLeft,
-    BottomCenter,
 }
 
 impl FigureStyle {
@@ -118,26 +125,6 @@ impl FigureStyle {
             Self::publication_tall()
         }
     }
-
-    fn screen() -> Self {
-        Self {
-            width: 1400,
-            height: 900,
-            margin_left: 150.0,
-            margin_top: 145.0,
-            margin_right: 60.0,
-            margin_bottom: 100.0,
-            font_axis: 16,
-            font_tick: 13,
-            font_category: 14,
-            font_legend: 13,
-            font_heatmap: 14,
-            show_header: true,
-            axis_stroke: 1.4,
-            line_stroke: 2.4,
-            tick_count: 5,
-        }
-    }
 }
 
 #[derive(Parser, Debug)]
@@ -172,6 +159,15 @@ struct Cli {
 
     #[arg(long)]
     threads: Option<usize>,
+
+    /// Export only these figures (repeatable). Accepts id (`06`), slug (`vo_delay_cdf_high_load`),
+    /// or `fig_06`. Omit to export all figures that have data.
+    #[arg(long = "figures", value_name = "FIG", num_args = 1..)]
+    figures: Vec<String>,
+
+    /// Print available figure ids and slugs, then exit.
+    #[arg(long = "list-figures", action = clap::ArgAction::SetTrue)]
+    list_figures: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -184,21 +180,19 @@ struct Figure {
     style: Option<FigureStyle>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum AccessCategory {
-    Be,
-    Vo,
-}
-
 #[derive(Debug, Clone)]
-struct DelaySample {
+struct VoDelaySample {
     config: String,
-    ac: AccessCategory,
     value_ms: f64,
 }
 
 fn main() -> Result<()> {
     let args = Cli::parse();
+    if args.list_figures {
+        print_figure_catalog();
+        return Ok(());
+    }
+    let selected = resolve_figure_selectors(&args.figures)?;
     let results_dirs = if args.results.is_empty() {
         vec![default_results_dir()]
     } else {
@@ -219,19 +213,37 @@ fn main() -> Result<()> {
     fs::create_dir_all(&args.output)
         .with_context(|| format!("failed to create {}", args.output.display()))?;
 
+    let need_dataset = selected.iter().any(|id| *id != 6);
+    let need_samples = selected.contains(&6);
+
     for results_dir in results_dirs {
         let density = density_label(&results_dir);
-        let dataset = rebuild_raw_dataset(&results_dir, args.threads).with_context(|| {
-            format!("failed to rebuild KPI data from {}", results_dir.display())
-        })?;
-        let samples = load_delay_samples(&results_dir).unwrap_or_else(|error| {
-            eprintln!(
-                "warning: could not load delay samples from {}: {error:#}",
-                results_dir.display()
-            );
+        let dataset = if need_dataset {
+            Some(rebuild_raw_dataset(&results_dir, args.threads).with_context(|| {
+                format!("failed to rebuild KPI data from {}", results_dir.display())
+            })?)
+        } else {
+            None
+        };
+        let samples = if need_samples {
+            load_vo_delay_cdf_samples(&results_dir).unwrap_or_else(|error| {
+                eprintln!(
+                    "warning: could not load VO delay samples from {}: {error:#}",
+                    results_dir.display()
+                );
+                Vec::new()
+            })
+        } else {
             Vec::new()
-        });
-        let figures = build_figures(&dataset, &samples, style);
+        };
+        let figures = build_figures(dataset.as_ref(), &samples, style, &selected);
+        if figures.is_empty() {
+            eprintln!(
+                "warning: no figures produced for {} (selected: {:?})",
+                results_dir.display(),
+                selected
+            );
+        }
 
         for figure in figures {
             let Some(order) = figure_order(figure.slug) else {
@@ -266,34 +278,107 @@ fn main() -> Result<()> {
 }
 
 fn build_figures(
-    dataset: &DashboardDataset,
-    samples: &[DelaySample],
+    dataset: Option<&DashboardDataset>,
+    samples: &[VoDelaySample],
     style: FigureStyle,
+    selected: &HashSet<u8>,
 ) -> Vec<Figure> {
+    let want = |id: u8| selected.contains(&id);
     let mut figures = Vec::new();
-    let matrix = summary_matrix(&dataset.config_summary);
-    if let Some(figure) = p95_priority_gap_figure(&matrix, style) {
-        figures.push(figure);
+    let matrix = dataset.map(|data| summary_matrix(&data.config_summary));
+    if want(1) {
+        if let Some(matrix) = matrix.as_ref() {
+            if let Some(figure) = p95_priority_gap_figure(matrix, style) {
+                figures.push(figure);
+            }
+        }
     }
-    if let Some(figure) = drop_rate_heatmap_figure(&matrix, style) {
-        figures.push(figure);
+    if want(2) {
+        if let Some(matrix) = matrix.as_ref() {
+            if let Some(figure) = drop_rate_heatmap_figure(matrix, style) {
+                figures.push(figure);
+            }
+        }
     }
-    if let Some(figure) = vo_reception_heatmap_figure(&matrix, style) {
-        figures.push(figure);
+    if want(3) {
+        if let Some(matrix) = matrix.as_ref() {
+            if let Some(figure) = vo_reception_heatmap_figure(matrix, style) {
+                figures.push(figure);
+            }
+        }
     }
-    if let Some(figure) = jitter_tradeoff_figure(&matrix, style) {
-        figures.push(figure);
+    if want(4) {
+        if let Some(matrix) = matrix.as_ref() {
+            if let Some(figure) = jitter_tradeoff_figure(matrix, style) {
+                figures.push(figure);
+            }
+        }
     }
-    if let Some(figure) = drop_attribution_figure(&matrix, style) {
-        figures.push(figure);
+    if want(5) {
+        if let Some(matrix) = matrix.as_ref() {
+            if let Some(figure) = drop_attribution_figure(matrix, style) {
+                figures.push(figure);
+            }
+        }
     }
-    if let Some(figure) = vo_delay_cdf_figure(samples, style) {
-        figures.push(figure);
+    if want(6) {
+        if let Some(figure) = vo_delay_cdf_figure(samples, style) {
+            figures.push(figure);
+        }
     }
-    if let Some(figure) = control_actions_figure(&matrix, style) {
-        figures.push(figure);
+    if want(7) {
+        if let Some(matrix) = matrix.as_ref() {
+            if let Some(figure) = control_actions_figure(matrix, style) {
+                figures.push(figure);
+            }
+        }
     }
     figures
+}
+
+fn resolve_figure_selectors(inputs: &[String]) -> Result<HashSet<u8>> {
+    if inputs.is_empty() {
+        return Ok((1..=7).collect());
+    }
+    let mut selected = HashSet::new();
+    for input in inputs {
+        let id = parse_figure_selector(input).with_context(|| {
+            format!(
+                "unknown figure {input:?}; use --list-figures to see ids and slugs"
+            )
+        })?;
+        selected.insert(id);
+    }
+    Ok(selected)
+}
+
+fn parse_figure_selector(input: &str) -> Option<u8> {
+    let token = input.trim().to_lowercase();
+    let token = token.strip_prefix("fig_").unwrap_or(&token);
+    if let Ok(id) = token.parse::<u8>() {
+        return slug_for_figure_id(id).and_then(figure_order);
+    }
+    match token.as_ref() {
+        "cdf" | "vo_delay_cdf" => Some(6),
+        "p95" | "p95_gap" => Some(1),
+        "drops" | "drop_attribution" => Some(5),
+        "v2x" | "v2x_control" => Some(7),
+        _ => figure_order(&token),
+    }
+}
+
+fn slug_for_figure_id(id: u8) -> Option<&'static str> {
+    FIGURE_CATALOG
+        .iter()
+        .find(|(_, figure_id)| *figure_id == id)
+        .map(|(slug, _)| *slug)
+}
+
+fn print_figure_catalog() {
+    println!("Available figures (--figures accepts id, fig_NN, or slug):");
+    for (slug, id) in FIGURE_CATALOG {
+        println!("  {id:02}  fig_{id:02}  {slug}");
+    }
 }
 
 fn p95_priority_gap_figure(
@@ -331,7 +416,7 @@ fn p95_priority_gap_figure(
         max_value,
         true,
     );
-    append_ieee_bottom_legend(
+    append_bottom_color_legend(
         &mut svg,
         &plot,
         style,
@@ -425,7 +510,7 @@ fn jitter_tradeoff_figure(
         let _ = strategy;
     }
     let color_items = [("BE", BE_COLOR), ("VO", VO_COLOR)];
-    append_ieee_bottom_legend(&mut svg, &plot, style, &color_items);
+    append_bottom_color_legend(&mut svg, &plot, style, &color_items);
     let marker_y = footer_legend_y(style) - legend_item_stride(style) - 10.0;
     let marker_w = workload_marker_legend_width(style);
     let marker_x = plot.left + (plot.inner_w - marker_w) / 2.0;
@@ -484,7 +569,7 @@ fn drop_attribution_figure(
         ));
     }
     let items = [("BE", BE_COLOR), ("VO", VO_COLOR), ("Other", "#9ca3af")];
-    append_ieee_bottom_legend(&mut svg, &plot, style, &items);
+    append_bottom_color_legend(&mut svg, &plot, style, &items);
     Some(Figure {
         slug: "mac_drop_attribution_high_load",
         title: "Packet-Drop Attribution Under High Load",
@@ -494,30 +579,41 @@ fn drop_attribution_figure(
     })
 }
 
-fn vo_delay_cdf_figure(samples: &[DelaySample], style: FigureStyle) -> Option<Figure> {
+fn vo_delay_cdf_figure(samples: &[VoDelaySample], style: FigureStyle) -> Option<Figure> {
     let mut by_strategy: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     for sample in samples {
-        if sample.ac == AccessCategory::Vo && sample.config.ends_with("_netload_high") {
-            if let Some((strategy, _)) = config_parts(&sample.config) {
-                by_strategy
-                    .entry(strategy)
-                    .or_default()
-                    .push(sample.value_ms);
-            }
+        if let Some((strategy, _)) = config_parts(&sample.config) {
+            by_strategy
+                .entry(strategy)
+                .or_default()
+                .push(sample.value_ms);
         }
     }
     by_strategy.retain(|_, values| values.len() >= 2);
     if by_strategy.is_empty() {
         return None;
     }
-    let max_x = by_strategy
-        .values()
-        .flat_map(|values| values.iter().copied())
-        .fold(0.0, f64::max);
-    let plot = PlotArea::new(style);
-    let mut svg = axis_frame(&plot, style, "VO delay (ms)", "CDF");
-    draw_x_ticks(&mut svg, &plot, style, max_x);
-    draw_y_ticks(&mut svg, &plot, style, 1.0);
+    let fig_style = vo_delay_cdf_style(style);
+    let max_x = VO_DELAY_CDF_X_MAX_MS;
+    let max_y = 1.0;
+    let plot = PlotArea::new_cdf(fig_style);
+    let mut svg = axis_frame_cdf(&plot, fig_style, "VO delay (ms)", "CDF");
+    draw_x_ticks_exact(
+        &mut svg,
+        &plot,
+        fig_style,
+        0.0,
+        max_x,
+        &[0.0, 1.0, 2.0, 3.0],
+    );
+    draw_y_ticks_exact(
+        &mut svg,
+        &plot,
+        fig_style,
+        0.0,
+        max_y,
+        &[0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+    );
     let mut legend_items = Vec::new();
     for (index, (strategy, values)) in by_strategy.iter_mut().enumerate() {
         values.sort_by(f64::total_cmp);
@@ -525,8 +621,8 @@ fn vo_delay_cdf_figure(samples: &[DelaySample], style: FigureStyle) -> Option<Fi
         let color = COLORS[index % COLORS.len()];
         let mut points = String::new();
         for (rank, value) in decimated.iter().enumerate() {
-            let x = plot.scale_x(*value, max_x);
-            let y = plot.scale_y((rank + 1) as f64 / decimated.len() as f64, 1.0);
+            let x = plot.scale_x_exact(value.min(max_x), 0.0, max_x);
+            let y = plot.scale_y_exact((rank + 1) as f64 / decimated.len() as f64, 0.0, max_y);
             points.push_str(&format!("{x:.2},{y:.2} "));
         }
         let dash = CDF_DASHES[index % CDF_DASHES.len()];
@@ -538,7 +634,7 @@ fn vo_delay_cdf_figure(samples: &[DelaySample], style: FigureStyle) -> Option<Fi
         svg.push_str(&format!(
             r#"<polyline points="{}" fill="none" stroke="{color}" stroke-width="{:.2}"{dash_attr}/>"#,
             points.trim(),
-            style.line_stroke
+            fig_style.line_stroke
         ));
         legend_items.push((strategy_label(strategy).to_string(), color.to_string()));
     }
@@ -546,20 +642,25 @@ fn vo_delay_cdf_figure(samples: &[DelaySample], style: FigureStyle) -> Option<Fi
         .iter()
         .map(|(label, color)| (label.as_str(), color.as_str()))
         .collect();
-    if style.show_header {
-        let (lx, ly) = legend_origin_vertical(&plot, LegendCorner::TopRight, &legend_refs, style);
-        svg.push_str(&legend_lines(lx, ly, &legend_refs, style));
-    } else {
-        append_ieee_bottom_line_legend(&mut svg, &plot, style, &legend_refs);
-    }
+    append_cdf_bottom_line_legend(&mut svg, &plot, fig_style, &legend_refs);
     Some(Figure {
         slug: "vo_delay_cdf_high_load",
         title: "Crash VO Delay Distribution Under High Load",
         question:
             "Do prioritization strategies improve the full delay distribution, not only the mean?",
         body: svg,
-        style: None,
+        style: Some(fig_style),
     })
+}
+
+fn vo_delay_cdf_style(mut style: FigureStyle) -> FigureStyle {
+    style.font_axis = style.font_axis.saturating_add(3);
+    style.font_tick = style.font_tick.saturating_add(3);
+    style.font_legend = style.font_legend.saturating_add(2);
+    style.margin_bottom = 18.0;
+    let footer = cdf_footer_band_height(style);
+    style.height = (style.margin_top + 276.0 + footer + style.margin_bottom).round() as u32;
+    style
 }
 
 fn control_actions_figure(
@@ -658,7 +759,7 @@ fn control_actions_figure(
         "middle",
         INK_COLOR,
     ));
-    append_ieee_bottom_legend(
+    append_bottom_color_legend(
         &mut svg,
         &bottom_plot,
         fig_style,
@@ -798,29 +899,58 @@ fn metric(summary: &ConfigSummary, key: &str) -> Option<f64> {
     }
 }
 
-fn load_delay_samples(results_dir: &Path) -> Result<Vec<DelaySample>> {
+fn load_config_by_stem(results_dir: &Path) -> Result<HashMap<String, String>> {
     let mut config_by_stem = HashMap::new();
     for sca_path in files_with_extension(results_dir, "sca")? {
         config_by_stem.insert(path_stem(&sca_path), config_from_sca(&sca_path)?);
     }
+    Ok(config_by_stem)
+}
 
+fn load_vo_delay_cdf_samples(results_dir: &Path) -> Result<Vec<VoDelaySample>> {
+    eprintln!("loading VO delay samples (high-load configs only)…");
+    let config_by_stem = load_config_by_stem(results_dir)?;
+    let vec_paths: Vec<_> = files_with_extension(results_dir, "vec")?
+        .into_iter()
+        .filter(|path| {
+            let stem = path_stem(path);
+            let config = config_by_stem.get(&stem).map(String::as_str).unwrap_or(&stem);
+            config.ends_with("_netload_high")
+        })
+        .collect();
+    let total = vec_paths.len();
     let mut samples = Vec::new();
-    for vec_path in files_with_extension(results_dir, "vec")? {
-        let stem = path_stem(&vec_path);
+    for (index, vec_path) in vec_paths.iter().enumerate() {
+        let stem = path_stem(vec_path);
         let config = config_by_stem
             .get(&stem)
             .cloned()
             .unwrap_or_else(|| stem.clone());
-        samples.extend(delay_samples_from_vec(&vec_path, &config)?);
+        let name = vec_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("?");
+        eprintln!("  [{}/{}] {name}", index + 1, total);
+        samples.extend(vo_delay_samples_from_vec(
+            vec_path,
+            &config,
+            CDF_VEC_SAMPLE_CAP,
+        )?);
     }
+    eprintln!("  {} VO delay samples loaded", samples.len());
     Ok(samples)
 }
 
-fn delay_samples_from_vec(path: &Path, config: &str) -> Result<Vec<DelaySample>> {
+fn vo_delay_samples_from_vec(
+    path: &Path,
+    config: &str,
+    cap: usize,
+) -> Result<Vec<VoDelaySample>> {
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
     let reader = BufReader::new(file);
-    let mut ac_by_vector_id: HashMap<String, AccessCategory> = HashMap::new();
-    let mut samples = Vec::new();
+    let mut vo_vector_ids = HashSet::new();
+    let mut reservoir = Vec::with_capacity(cap);
+    let mut seen = 0usize;
     for line in reader.lines() {
         let line = line?;
         let mut parts = line.split_whitespace();
@@ -837,32 +967,41 @@ fn delay_samples_from_vec(path: &Path, config: &str) -> Result<Vec<DelaySample>>
             let Some(metric) = parts.next() else {
                 continue;
             };
-            if is_node_app(module, 0) && metric == "beEndToEndDelay:vector" {
-                ac_by_vector_id.insert(vector_id.to_string(), AccessCategory::Be);
-            } else if is_node_app(module, 0) && metric == "voEndToEndDelay:vector" {
-                ac_by_vector_id.insert(vector_id.to_string(), AccessCategory::Vo);
+            if is_node_app(module, 0) && metric == "voEndToEndDelay:vector" {
+                vo_vector_ids.insert(vector_id.to_string());
             }
             continue;
         }
-        let Some(ac) = ac_by_vector_id.get(first).copied() else {
+        if !vo_vector_ids.contains(first) {
             continue;
-        };
+        }
         let _event = parts.next();
         let _time = parts.next();
         let Some(value_raw) = parts.next() else {
             continue;
         };
-        if let Ok(value_s) = value_raw.parse::<f64>() {
-            if value_s.is_finite() {
-                samples.push(DelaySample {
-                    config: config.to_string(),
-                    ac,
-                    value_ms: value_s * 1000.0,
-                });
-            }
+        let Ok(value_s) = value_raw.parse::<f64>() else {
+            continue;
+        };
+        if !value_s.is_finite() {
+            continue;
+        }
+        let value_ms = value_s * 1000.0;
+        seen += 1;
+        if reservoir.len() < cap {
+            reservoir.push(VoDelaySample {
+                config: config.to_string(),
+                value_ms,
+            });
+        } else {
+            let slot = seen.wrapping_mul(0x9E37_79B9) % cap;
+            reservoir[slot] = VoDelaySample {
+                config: config.to_string(),
+                value_ms,
+            };
         }
     }
-    Ok(samples)
+    Ok(reservoir)
 }
 
 fn config_from_sca(path: &Path) -> Result<String> {
@@ -889,6 +1028,14 @@ struct PlotArea {
 impl PlotArea {
     fn new(style: FigureStyle) -> Self {
         let footer = footer_band_height(style);
+        Self::from_margins(style, footer)
+    }
+
+    fn new_cdf(style: FigureStyle) -> Self {
+        Self::from_margins(style, cdf_footer_band_height(style))
+    }
+
+    fn from_margins(style: FigureStyle, footer: f64) -> Self {
         Self {
             left: style.margin_left,
             top: style.margin_top,
@@ -896,10 +1043,6 @@ impl PlotArea {
             inner_w: style.width as f64 - style.margin_left - style.margin_right,
             inner_h: style.height as f64 - style.margin_top - style.margin_bottom - footer,
         }
-    }
-
-    fn scale_x(&self, value: f64, max_value: f64) -> f64 {
-        self.left + self.inner_w * value / padded_max(max_value)
     }
 
     fn scale_y(&self, value: f64, max_value: f64) -> f64 {
@@ -913,6 +1056,16 @@ impl PlotArea {
 
     fn scale_y_range(&self, value: f64, min_value: f64, max_value: f64) -> f64 {
         let span = padded_range(min_value, max_value);
+        self.bottom - self.inner_h * (value - min_value) / span
+    }
+
+    fn scale_x_exact(&self, value: f64, min_value: f64, max_value: f64) -> f64 {
+        let span = (max_value - min_value).max(1e-9);
+        self.left + self.inner_w * (value - min_value) / span
+    }
+
+    fn scale_y_exact(&self, value: f64, min_value: f64, max_value: f64) -> f64 {
+        let span = (max_value - min_value).max(1e-9);
         self.bottom - self.inner_h * (value - min_value) / span
     }
 }
@@ -946,6 +1099,43 @@ fn write_svg(path: &Path, style: FigureStyle, figure: &Figure) -> Result<()> {
     writeln!(file, "{}", figure.body)?;
     writeln!(file, "</svg>")?;
     Ok(())
+}
+
+fn axis_label_offset_cdf(style: FigureStyle) -> f64 {
+    tick_label_offset(style) + f64::from(style.font_axis) + 8.0
+}
+
+fn axis_frame_cdf(plot: &PlotArea, style: FigureStyle, x_label: &str, y_label: &str) -> String {
+    let mut svg = String::new();
+    let stroke = style.axis_stroke;
+    svg.push_str(&format!(
+        r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK_COLOR}" stroke-width="{stroke}"/>"##,
+        plot.left,
+        plot.bottom,
+        plot.left + plot.inner_w,
+        plot.bottom
+    ));
+    svg.push_str(&format!(
+        r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK_COLOR}" stroke-width="{stroke}"/>"##,
+        plot.left, plot.top, plot.left, plot.bottom
+    ));
+    svg.push_str(&text(
+        plot.left + plot.inner_w / 2.0,
+        plot.bottom + axis_label_offset_cdf(style),
+        x_label,
+        style.font_axis,
+        "middle",
+        INK_COLOR,
+    ));
+    let y_axis_x = plot.left - y_axis_label_offset(style);
+    svg.push_str(&format!(
+        r##"<text x="{y_axis_x:.2}" y="{:.2}" text-anchor="middle" font-size="{}" fill="{INK_COLOR}" transform="rotate(-90 {y_axis_x:.2} {:.2})">{}</text>"##,
+        plot.top + plot.inner_h / 2.0,
+        style.font_axis,
+        plot.top + plot.inner_h / 2.0,
+        escape(y_label)
+    ));
+    svg
 }
 
 fn axis_frame(plot: &PlotArea, style: FigureStyle, x_label: &str, y_label: &str) -> String {
@@ -1013,10 +1203,6 @@ fn draw_y_ticks_ranged(
     }
 }
 
-fn draw_x_ticks(svg: &mut String, plot: &PlotArea, style: FigureStyle, max_value: f64) {
-    draw_x_ticks_ranged(svg, plot, style, 0.0, max_value);
-}
-
 fn draw_x_ticks_ranged(
     svg: &mut String,
     plot: &PlotArea,
@@ -1045,6 +1231,62 @@ fn draw_x_ticks_ranged(
     }
 }
 
+fn draw_x_ticks_exact(
+    svg: &mut String,
+    plot: &PlotArea,
+    style: FigureStyle,
+    min_value: f64,
+    max_value: f64,
+    ticks: &[f64],
+) {
+    for (index, value) in ticks.iter().enumerate() {
+        let x = plot.scale_x_exact(*value, min_value, max_value);
+        if index > 0 && index < ticks.len() - 1 {
+            svg.push_str(&format!(
+                r##"<line x1="{x:.2}" y1="{:.2}" x2="{x:.2}" y2="{:.2}" stroke="{GRID_COLOR}" stroke-width="0.6"/>"##,
+                plot.top,
+                plot.bottom
+            ));
+        }
+        svg.push_str(&text(
+            x,
+            plot.bottom + tick_label_offset(style),
+            &format_round_tick(*value),
+            style.font_tick,
+            "middle",
+            MUTED_COLOR,
+        ));
+    }
+}
+
+fn draw_y_ticks_exact(
+    svg: &mut String,
+    plot: &PlotArea,
+    style: FigureStyle,
+    min_value: f64,
+    max_value: f64,
+    ticks: &[f64],
+) {
+    for (index, value) in ticks.iter().enumerate() {
+        let y = plot.scale_y_exact(*value, min_value, max_value);
+        if index > 0 && index < ticks.len() - 1 {
+            svg.push_str(&format!(
+                r##"<line x1="{:.2}" y1="{y:.2}" x2="{:.2}" y2="{y:.2}" stroke="{GRID_COLOR}" stroke-width="0.6"/>"##,
+                plot.left,
+                plot.left + plot.inner_w
+            ));
+        }
+        svg.push_str(&text(
+            plot.left - tick_label_pad(style),
+            y + 3.0,
+            &format_round_tick(*value),
+            style.font_tick,
+            "end",
+            MUTED_COLOR,
+        ));
+    }
+}
+
 fn category_offset(style: FigureStyle) -> f64 {
     if style.show_header {
         28.0
@@ -1068,6 +1310,11 @@ fn footer_band_height(style: FigureStyle) -> f64 {
     } else {
         category_offset(style) + f64::from(style.font_axis) + 16.0 + legend_box_size(style) * 2.0 + 14.0
     }
+}
+
+/// Footer for line plots without category labels (e.g. VO delay CDF).
+fn cdf_footer_band_height(style: FigureStyle) -> f64 {
+    tick_label_offset(style) + f64::from(style.font_axis) + 12.0 + legend_box_size(style) + 10.0
 }
 
 fn footer_legend_y(style: FigureStyle) -> f64 {
@@ -1120,10 +1367,6 @@ fn tick_label_pad(style: FigureStyle) -> f64 {
     }
 }
 
-fn tick_values(max_value: f64, tick_count: u32) -> Vec<f64> {
-    tick_values_ranged(0.0, max_value, tick_count)
-}
-
 fn tick_values_ranged(min_value: f64, max_value: f64, tick_count: u32) -> Vec<f64> {
     let span = padded_range(min_value, max_value);
     (0..=tick_count)
@@ -1148,85 +1391,28 @@ fn legend_symbol_width(label: &str, style: FigureStyle) -> f64 {
 }
 
 fn legend_horizontal_width(items: &[(&str, &str)], style: FigureStyle) -> f64 {
+    legend_horizontal_width_spaced(items, style, legend_horizontal_gap(style))
+}
+
+fn legend_horizontal_width_spaced(items: &[(&str, &str)], style: FigureStyle, gap: f64) -> f64 {
     let mut width = 0.0;
     for (index, (label, _)) in items.iter().enumerate() {
         if index > 0 {
-            width += legend_horizontal_gap(style);
+            width += gap;
         }
         width += legend_symbol_width(label, style);
     }
     width
 }
 
-fn legend_vertical_height(rows: usize, style: FigureStyle) -> f64 {
-    if rows == 0 {
-        0.0
-    } else {
-        legend_item_stride(style) * (rows - 1) as f64 + legend_box_size(style)
-    }
-}
-
 fn legend_horizontal_gap(style: FigureStyle) -> f64 {
     if style.show_header { 18.0 } else { 10.0 }
 }
 
-fn legend_vertical_width(items: &[(&str, &str)], style: FigureStyle) -> f64 {
-    items
-        .iter()
-        .map(|(label, _)| legend_symbol_width(label, style))
-        .fold(0.0, f64::max)
-}
-
-fn legend_origin_horizontal(
-    plot: &PlotArea,
-    corner: LegendCorner,
-    items: &[(&str, &str)],
-    style: FigureStyle,
-) -> (f64, f64) {
+fn legend_top_right(plot: &PlotArea, items: &[(&str, &str)], style: FigureStyle) -> (f64, f64) {
     let pad = if style.show_header { 12.0 } else { 6.0 };
     let w = legend_horizontal_width(items, style);
-    let h = legend_box_size(style);
-    match corner {
-        LegendCorner::TopRight => (
-            plot.left + plot.inner_w - w - pad,
-            plot.top + pad,
-        ),
-        LegendCorner::BottomRight => (
-            plot.left + plot.inner_w - w - pad,
-            plot.bottom - h - pad - tick_label_offset(style),
-        ),
-        LegendCorner::BottomLeft => (plot.left + pad, plot.bottom - h - pad - tick_label_offset(style)),
-        LegendCorner::BottomCenter => (
-            plot.left + (plot.inner_w - w) / 2.0,
-            plot.bottom + category_offset(style) + f64::from(style.font_axis) + 4.0,
-        ),
-    }
-}
-
-fn legend_origin_vertical(
-    plot: &PlotArea,
-    corner: LegendCorner,
-    items: &[(&str, &str)],
-    style: FigureStyle,
-) -> (f64, f64) {
-    let pad = if style.show_header { 12.0 } else { 6.0 };
-    let w = legend_vertical_width(items, style);
-    let h = legend_vertical_height(items.len(), style);
-    match corner {
-        LegendCorner::TopRight => (
-            plot.left + plot.inner_w - w - pad,
-            plot.top + pad,
-        ),
-        LegendCorner::BottomRight => (
-            plot.left + plot.inner_w - w - pad,
-            plot.bottom - h - pad - tick_label_offset(style),
-        ),
-        LegendCorner::BottomLeft => (plot.left + pad, plot.bottom - h - pad - tick_label_offset(style)),
-        LegendCorner::BottomCenter => (
-            plot.left + (plot.inner_w - w) / 2.0,
-            plot.bottom + category_offset(style) + f64::from(style.font_axis) + 4.0,
-        ),
-    }
+    (plot.left + plot.inner_w - w - pad, plot.top + pad)
 }
 
 fn heatmap_plot_area(style: FigureStyle) -> PlotArea {
@@ -1346,14 +1532,14 @@ fn panel_axis_frame(
     svg
 }
 
-fn append_ieee_bottom_legend(
+fn append_bottom_color_legend(
     svg: &mut String,
     plot: &PlotArea,
     style: FigureStyle,
     items: &[(&str, &str)],
 ) {
     if style.show_header {
-        let (lx, ly) = legend_origin_horizontal(plot, LegendCorner::TopRight, items, style);
+        let (lx, ly) = legend_top_right(plot, items, style);
         svg.push_str(&legend_horizontal(lx, ly, items, style));
         return;
     }
@@ -1363,24 +1549,31 @@ fn append_ieee_bottom_legend(
     svg.push_str(&legend_horizontal(x, y, items, style));
 }
 
-fn append_ieee_bottom_line_legend(
+fn append_cdf_bottom_line_legend(
     svg: &mut String,
     plot: &PlotArea,
     style: FigureStyle,
     items: &[(&str, &str)],
 ) {
-    if style.show_header {
-        let (lx, ly) = legend_origin_vertical(plot, LegendCorner::TopRight, items, style);
-        svg.push_str(&legend_lines(lx, ly, items, style));
-        return;
-    }
-    let w = legend_horizontal_width(items, style);
+    let w = legend_horizontal_width_spaced(items, style, CDF_LEGEND_HORIZONTAL_GAP);
     let x = plot.left + (plot.inner_w - w) / 2.0;
     let y = footer_legend_y(style);
-    svg.push_str(&legend_lines_horizontal(x, y, items, style));
+    svg.push_str(&legend_lines_horizontal_spaced(
+        x,
+        y,
+        items,
+        style,
+        CDF_LEGEND_HORIZONTAL_GAP,
+    ));
 }
 
-fn legend_lines_horizontal(x: f64, y: f64, items: &[(&str, &str)], style: FigureStyle) -> String {
+fn legend_lines_horizontal_spaced(
+    x: f64,
+    y: f64,
+    items: &[(&str, &str)],
+    style: FigureStyle,
+    gap: f64,
+) -> String {
     let mut svg = String::new();
     let box_size = legend_box_size(style);
     let line_len = box_size * 1.4;
@@ -1388,7 +1581,7 @@ fn legend_lines_horizontal(x: f64, y: f64, items: &[(&str, &str)], style: Figure
     let row_y = y + box_size * 0.5;
     for (index, (label, color)) in items.iter().enumerate() {
         if index > 0 {
-            cursor += legend_horizontal_gap(style);
+            cursor += gap;
         }
         let dash = CDF_DASHES[index % CDF_DASHES.len()];
         let dash_attr = if dash.is_empty() {
@@ -1520,30 +1713,6 @@ fn workload_marker_legend_horizontal(x: f64, y: f64, style: FigureStyle) -> Stri
     svg
 }
 
-fn workload_marker_legend(x: f64, y: f64, style: FigureStyle) -> String {
-    let mut svg = String::new();
-    let entries = [("low", 2.5), ("med", 3.5), ("high", 4.5)];
-    let scale = if style.show_header { 1.0 } else { 0.72 };
-    let box_size = legend_box_size(style);
-    for (index, (label, radius)) in entries.iter().enumerate() {
-        let row_y = y + index as f64 * legend_item_stride(style) + box_size * 0.5;
-        let cx = x + 6.0 * scale;
-        let r = radius * scale;
-        svg.push_str(&format!(
-            r#"<circle cx="{cx:.2}" cy="{row_y:.2}" r="{r:.2}" fill="{MUTED_COLOR}" fill-opacity="0.65" stroke="{INK_COLOR}" stroke-width="0.5"/>"#
-        ));
-        svg.push_str(&text(
-            x + 16.0 * scale,
-            row_y + 3.0,
-            label,
-            style.font_legend,
-            "start",
-            INK_COLOR,
-        ));
-    }
-    svg
-}
-
 fn draw_bar(
     svg: &mut String,
     plot: &PlotArea,
@@ -1631,35 +1800,6 @@ fn legend_horizontal(x: f64, y: f64, items: &[(&str, &str)], style: FigureStyle)
     svg
 }
 
-fn legend_lines(x: f64, y: f64, items: &[(&str, &str)], style: FigureStyle) -> String {
-    let mut svg = String::new();
-    let box_size = legend_box_size(style);
-    let line_len = box_size * 1.4;
-    for (index, (label, color)) in items.iter().enumerate() {
-        let row_y = y + index as f64 * legend_item_stride(style) + box_size * 0.5;
-        let dash = CDF_DASHES[index % CDF_DASHES.len()];
-        let dash_attr = if dash.is_empty() {
-            String::new()
-        } else {
-            format!(r#" stroke-dasharray="{dash}""#)
-        };
-        svg.push_str(&format!(
-            r#"<line x1="{x:.2}" y1="{row_y:.2}" x2="{:.2}" y2="{row_y:.2}" stroke="{color}" stroke-width="{:.2}"{dash_attr}/>"#,
-            x + line_len,
-            style.line_stroke
-        ));
-        svg.push_str(&text(
-            x + line_len + 4.0,
-            row_y + 3.0,
-            label,
-            style.font_legend,
-            "start",
-            INK_COLOR,
-        ));
-    }
-    svg
-}
-
 fn heat_color(value: f64, max_value: f64) -> String {
     let ratio = if max_value <= 0.0 {
         0.0
@@ -1714,6 +1854,14 @@ fn format_count(value: f64) -> String {
     }
 }
 
+fn format_round_tick(value: f64) -> String {
+    if value.fract().abs() < 1e-6 {
+        format!("{:.0}", value)
+    } else {
+        format!("{:.1}", value)
+    }
+}
+
 fn format_tick(value: f64, max_value: f64) -> String {
     if max_value <= 1.05 && max_value > 0.0 {
         format!("{value:.1}")
@@ -1725,16 +1873,10 @@ fn format_tick(value: f64, max_value: f64) -> String {
 }
 
 fn figure_order(slug: &str) -> Option<u8> {
-    match slug {
-        "p95_delay_priority_gap" => Some(1),
-        "mac_drop_rate_by_strategy_load" => Some(2),
-        "vo_reception_by_strategy_load" => Some(3),
-        "latency_jitter_tradeoff" => Some(4),
-        "mac_drop_attribution_high_load" => Some(5),
-        "vo_delay_cdf_high_load" => Some(6),
-        "v2x_control_actions_by_load" => Some(7),
-        _ => None,
-    }
+    FIGURE_CATALOG
+        .iter()
+        .find(|(name, _)| *name == slug)
+        .map(|(_, id)| *id)
 }
 
 fn strategy_label(strategy: &str) -> &'static str {
@@ -1823,10 +1965,11 @@ fn is_node_app(module: &str, app_index: u8) -> bool {
 
 fn convert_svg(svg_path: &Path, output_path: &Path, format: &str, dpi: u32) {
     let converted = if command_exists("rsvg-convert") {
+        let rsvg_format = if format == "pdf" { "pdf1.4" } else { format };
         Command::new("rsvg-convert")
             .args([
                 "-f",
-                format,
+                rsvg_format,
                 "-d",
                 &dpi.to_string(),
                 "-p",
