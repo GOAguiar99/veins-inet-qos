@@ -76,7 +76,7 @@ cargo run --release --bin export_figures -- \
   --dpi 300
 ```
 
-By default figures use `--ieee` (252×200 pt, Times serif, tight margins, no in-figure titles). Use `--no-ieee` and larger `--width` / `--height` for slide-style exports.
+By default figures use the **publication** preset (720×480 px, readable fonts, legend in a dedicated footer band below the plot). Pass `--ieee` for the compact 252 px single-column layout. Use `--no-ieee` explicitly or omit `--ieee` for publication exports.
 
 Naming: `fig_{01..07}_{slug}_{highway_light|highway_heavy}.{ext}`
 
@@ -121,7 +121,7 @@ Missing data → JSON `null` / UI `N/A` (no fabrication).
 | 04 | `latency_jitter_tradeoff` | Mean delay vs jitter scatter |
 | 05 | `mac_drop_attribution_high_load` | BE/VO/unclassified drops |
 | 06 | `vo_delay_cdf_high_load` | Empirical VO delay CDF |
-| 07 | `v2x_control_actions_by_load` | V2X control counters |
+| 07 | `v2x_control_actions_by_load` | V2X control counters (high load; dual-panel VO prot. / BE supp.) |
 
 Figures are **omitted** when required metrics or samples are absent.
 

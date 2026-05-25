@@ -21,9 +21,15 @@ const FONT_SERIF: &str = r#""Times New Roman", Times, serif"#;
 const CDF_DASHES: &[&str] = &["", "7,3", "3,3", "9,4,2,4", "2,2"];
 const DEFAULT_IEEE_WIDTH: u32 = 252;
 const DEFAULT_IEEE_HEIGHT: u32 = 216;
+const DEFAULT_IEEE_HEIGHT_TALL: u32 = 320;
+const DEFAULT_PUB_WIDTH: u32 = 720;
+const DEFAULT_PUB_HEIGHT: u32 = 480;
+const DEFAULT_PUB_HEIGHT_TALL: u32 = 640;
+const CDF_MAX_POINTS: usize = 150;
+const MIN_BAR_HEIGHT: f64 = 1.0;
+const V2X_STRATEGIES: &[&str] = &["stable", "guarded", "emergency"];
 
-/// Layout tuned for `\includegraphics[width=\linewidth]` in IEEE two-column figures
-/// (252 px wide ≈ 3.5 in at 72 pt/in; fonts are sized to stay legible at column width).
+/// Layout presets for exported SVG/PDF figures.
 #[derive(Debug, Clone, Copy)]
 struct FigureStyle {
     width: u32,
@@ -47,6 +53,8 @@ struct FigureStyle {
 enum LegendCorner {
     TopRight,
     BottomRight,
+    BottomLeft,
+    BottomCenter,
 }
 
 impl FigureStyle {
@@ -57,7 +65,7 @@ impl FigureStyle {
             margin_left: 48.0,
             margin_top: 10.0,
             margin_right: 10.0,
-            margin_bottom: 38.0,
+            margin_bottom: 44.0,
             font_axis: 11,
             font_tick: 10,
             font_category: 10,
@@ -67,6 +75,47 @@ impl FigureStyle {
             axis_stroke: 1.15,
             line_stroke: 2.0,
             tick_count: 4,
+        }
+    }
+
+    fn ieee_column_tall() -> Self {
+        let mut style = Self::ieee_column();
+        style.height = DEFAULT_IEEE_HEIGHT_TALL;
+        style
+    }
+
+    /// Default export preset: roomy canvas, readable labels, legend in a dedicated footer band.
+    fn publication() -> Self {
+        Self {
+            width: DEFAULT_PUB_WIDTH,
+            height: DEFAULT_PUB_HEIGHT,
+            margin_left: 78.0,
+            margin_top: 28.0,
+            margin_right: 28.0,
+            margin_bottom: 78.0,
+            font_axis: 15,
+            font_tick: 13,
+            font_category: 13,
+            font_legend: 12,
+            font_heatmap: 13,
+            show_header: false,
+            axis_stroke: 1.25,
+            line_stroke: 2.5,
+            tick_count: 5,
+        }
+    }
+
+    fn publication_tall() -> Self {
+        let mut style = Self::publication();
+        style.height = DEFAULT_PUB_HEIGHT_TALL;
+        style
+    }
+
+    fn tall_variant(self) -> Self {
+        if self.width <= DEFAULT_IEEE_WIDTH + 40 {
+            Self::ieee_column_tall()
+        } else {
+            Self::publication_tall()
         }
     }
 
@@ -110,15 +159,15 @@ struct Cli {
     #[arg(long, default_value_t = 300)]
     dpi: u32,
 
-    /// IEEE single-column layout (3.5 in wide, tight margins, no in-figure titles).
-    #[arg(long = "ieee", action = clap::ArgAction::SetTrue, default_value_t = true)]
+    /// Compact IEEE single-column layout (252 px wide). Use `--ieee` explicitly.
+    #[arg(long = "ieee", action = clap::ArgAction::SetTrue, default_value_t = false)]
     #[arg(long = "no-ieee", action = clap::ArgAction::SetFalse)]
     ieee: bool,
 
-    #[arg(long, default_value_t = DEFAULT_IEEE_WIDTH)]
+    #[arg(long, default_value_t = DEFAULT_PUB_WIDTH)]
     width: u32,
 
-    #[arg(long, default_value_t = DEFAULT_IEEE_HEIGHT)]
+    #[arg(long, default_value_t = DEFAULT_PUB_HEIGHT)]
     height: u32,
 
     #[arg(long)]
@@ -131,6 +180,8 @@ struct Figure {
     title: &'static str,
     question: &'static str,
     body: String,
+    /// Per-figure layout override (e.g. dual-panel fig_07 uses a taller canvas).
+    style: Option<FigureStyle>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -160,10 +211,10 @@ fn main() -> Result<()> {
         ieee.height = args.height;
         ieee
     } else {
-        let mut screen = FigureStyle::screen();
-        screen.width = args.width;
-        screen.height = args.height;
-        screen
+        let mut publication = FigureStyle::publication();
+        publication.width = args.width;
+        publication.height = args.height;
+        publication
     };
     fs::create_dir_all(&args.output)
         .with_context(|| format!("failed to create {}", args.output.display()))?;
@@ -189,7 +240,8 @@ fn main() -> Result<()> {
             };
             let base_name = format!("fig_{:02}_{}_{}", order, figure.slug, density);
             let svg_path = args.output.join(format!("{base_name}.svg"));
-            write_svg(&svg_path, style, &figure)?;
+            let figure_style = figure.style.unwrap_or(style);
+            write_svg(&svg_path, figure_style, &figure)?;
             if formats.png {
                 convert_svg(
                     &svg_path,
@@ -260,6 +312,9 @@ fn p95_priority_gap_figure(
     if rows.is_empty() {
         return None;
     }
+    let categories: Vec<&str> = rows.iter().map(|(label, _, _)| *label).collect();
+    let be_values: Vec<f64> = rows.iter().map(|(_, be, _)| *be).collect();
+    let vo_values: Vec<f64> = rows.iter().map(|(_, _, vo)| *vo).collect();
     let max_value = rows
         .iter()
         .flat_map(|(_, be, vo)| [*be, *vo])
@@ -267,45 +322,27 @@ fn p95_priority_gap_figure(
     let plot = PlotArea::new(style);
     let mut svg = axis_frame(&plot, style, "Strategy", "P95 delay (ms)");
     draw_y_ticks(&mut svg, &plot, style, max_value);
-    let group_width = plot.inner_w / rows.len() as f64;
-    let bar_width = group_width * 0.26;
-    for (index, (label, be, vo)) in rows.iter().enumerate() {
-        let center = plot.left + group_width * (index as f64 + 0.5);
-        draw_bar(
-            &mut svg,
-            &plot,
-            center - bar_width * 0.65,
-            bar_width,
-            *be,
-            max_value,
-            BE_COLOR,
-        );
-        draw_bar(
-            &mut svg,
-            &plot,
-            center + bar_width * 0.65,
-            bar_width,
-            *vo,
-            max_value,
-            VO_COLOR,
-        );
-        svg.push_str(&text(
-            center,
-            plot.bottom + category_offset(style),
-            label,
-            style.font_category,
-            "middle",
-            MUTED_COLOR,
-        ));
-    }
-    let items = [("BE P95", BE_COLOR), ("VO P95", VO_COLOR)];
-    let (lx, ly) = legend_origin_horizontal(&plot, LegendCorner::TopRight, &items, style);
-    svg.push_str(&legend_horizontal(lx, ly, &items, style));
+    draw_grouped_bar_panel(
+        &mut svg,
+        &plot,
+        style,
+        &categories,
+        &[("BE P95", BE_COLOR, &be_values), ("VO P95", VO_COLOR, &vo_values)],
+        max_value,
+        true,
+    );
+    append_ieee_bottom_legend(
+        &mut svg,
+        &plot,
+        style,
+        &[("BE P95", BE_COLOR), ("VO P95", VO_COLOR)],
+    );
     Some(Figure {
         slug: "p95_delay_priority_gap",
         title: "Tail Delay Priority Gap Under High Load",
         question: "Does crash VO traffic obtain lower tail delay than ordinary BE traffic under contention?",
         body: svg,
+        style: None,
     })
 }
 
@@ -371,15 +408,16 @@ fn jitter_tradeoff_figure(
     if points.is_empty() {
         return None;
     }
-    let max_x = points.iter().map(|point| point.3).fold(0.0, f64::max);
-    let max_y = points.iter().map(|point| point.4).fold(0.0, f64::max);
+    let delays: Vec<f64> = points.iter().map(|point| point.3).collect();
+    let jitters: Vec<f64> = points.iter().map(|point| point.4).collect();
+    let (min_x, max_x, min_y, max_y) = scatter_axis_bounds(&delays, &jitters);
     let plot = PlotArea::new(style);
     let mut svg = axis_frame(&plot, style, "Mean delay (ms)", "Mean |jitter| (ms)");
-    draw_x_ticks(&mut svg, &plot, style, max_x);
-    draw_y_ticks(&mut svg, &plot, style, max_y);
+    draw_x_ticks_ranged(&mut svg, &plot, style, min_x, max_x);
+    draw_y_ticks_ranged(&mut svg, &plot, style, min_y, max_y);
     for (strategy, workload, _ac, delay, jitter, color) in points {
-        let x = plot.scale_x(delay, max_x);
-        let y = plot.scale_y(jitter, max_y);
+        let x = plot.scale_x_range(delay, min_x, max_x);
+        let y = plot.scale_y_range(jitter, min_y, max_y);
         let radius = workload_marker_radius(workload, style);
         svg.push_str(&format!(
             r#"<circle cx="{x:.2}" cy="{y:.2}" r="{radius:.2}" fill="{color}" fill-opacity="0.9" stroke="{INK_COLOR}" stroke-width="0.6"/>"#
@@ -387,16 +425,17 @@ fn jitter_tradeoff_figure(
         let _ = strategy;
     }
     let color_items = [("BE", BE_COLOR), ("VO", VO_COLOR)];
-    let (lx, ly) = legend_origin_horizontal(&plot, LegendCorner::TopRight, &color_items, style);
-    svg.push_str(&legend_horizontal(lx, ly, &color_items, style));
-    let marker_items = [("low", ""), ("med", ""), ("high", "")];
-    let (mx, my) = legend_origin_vertical(&plot, LegendCorner::BottomRight, &marker_items, style);
-    svg.push_str(&workload_marker_legend(mx, my, style));
+    append_ieee_bottom_legend(&mut svg, &plot, style, &color_items);
+    let marker_y = footer_legend_y(style) - legend_item_stride(style) - 10.0;
+    let marker_w = workload_marker_legend_width(style);
+    let marker_x = plot.left + (plot.inner_w - marker_w) / 2.0;
+    svg.push_str(&workload_marker_legend_horizontal(marker_x, marker_y, style));
     Some(Figure {
         slug: "latency_jitter_tradeoff",
         title: "Latency and Jitter Tradeoff",
         question: "Does prioritization reduce crash-message latency without introducing unstable delay variation?",
         body: svg,
+        style: None,
     })
 }
 
@@ -445,13 +484,13 @@ fn drop_attribution_figure(
         ));
     }
     let items = [("BE", BE_COLOR), ("VO", VO_COLOR), ("Other", "#9ca3af")];
-    let (lx, ly) = legend_origin_horizontal(&plot, LegendCorner::TopRight, &items, style);
-    svg.push_str(&legend_horizontal(lx, ly, &items, style));
+    append_ieee_bottom_legend(&mut svg, &plot, style, &items);
     Some(Figure {
         slug: "mac_drop_attribution_high_load",
         title: "Packet-Drop Attribution Under High Load",
         question: "Are packet losses concentrated in BE traffic, VO traffic, or unclassified MAC behavior?",
         body: svg,
+        style: None,
     })
 }
 
@@ -482,11 +521,12 @@ fn vo_delay_cdf_figure(samples: &[DelaySample], style: FigureStyle) -> Option<Fi
     let mut legend_items = Vec::new();
     for (index, (strategy, values)) in by_strategy.iter_mut().enumerate() {
         values.sort_by(f64::total_cmp);
+        let decimated = decimate_sorted(values, CDF_MAX_POINTS);
         let color = COLORS[index % COLORS.len()];
         let mut points = String::new();
-        for (rank, value) in values.iter().enumerate() {
+        for (rank, value) in decimated.iter().enumerate() {
             let x = plot.scale_x(*value, max_x);
-            let y = plot.scale_y((rank + 1) as f64 / values.len() as f64, 1.0);
+            let y = plot.scale_y((rank + 1) as f64 / decimated.len() as f64, 1.0);
             points.push_str(&format!("{x:.2},{y:.2} "));
         }
         let dash = CDF_DASHES[index % CDF_DASHES.len()];
@@ -506,14 +546,19 @@ fn vo_delay_cdf_figure(samples: &[DelaySample], style: FigureStyle) -> Option<Fi
         .iter()
         .map(|(label, color)| (label.as_str(), color.as_str()))
         .collect();
-    let (lx, ly) = legend_origin_vertical(&plot, LegendCorner::TopRight, &legend_refs, style);
-    svg.push_str(&legend_lines(lx, ly, &legend_refs, style));
+    if style.show_header {
+        let (lx, ly) = legend_origin_vertical(&plot, LegendCorner::TopRight, &legend_refs, style);
+        svg.push_str(&legend_lines(lx, ly, &legend_refs, style));
+    } else {
+        append_ieee_bottom_line_legend(&mut svg, &plot, style, &legend_refs);
+    }
     Some(Figure {
         slug: "vo_delay_cdf_high_load",
         title: "Crash VO Delay Distribution Under High Load",
         question:
             "Do prioritization strategies improve the full delay distribution, not only the mean?",
         body: svg,
+        style: None,
     })
 }
 
@@ -521,77 +566,110 @@ fn control_actions_figure(
     matrix: &BTreeMap<(String, String), ConfigSummary>,
     style: FigureStyle,
 ) -> Option<Figure> {
-    let rows: Vec<_> = ["stable", "guarded", "emergency"]
+    let rows: Vec<_> = V2X_STRATEGIES
         .iter()
-        .flat_map(|strategy| {
-            WORKLOADS.iter().filter_map(move |workload| {
-                let summary = matrix.get(&(strategy.to_string(), workload.to_string()))?;
-                let protection = summary
-                    .metrics
-                    .vo_protection_activation_count
-                    .unwrap_or(0.0);
-                let suppressed = summary
-                    .metrics
-                    .be_grant_suppressed_while_blocked_count
-                    .unwrap_or(0.0);
-                ((protection + suppressed) > 0.0).then_some((
-                    strategy_label(strategy),
-                    *workload,
-                    protection,
-                    suppressed,
-                ))
-            })
+        .filter_map(|strategy| {
+            let summary = matrix.get(&(strategy.to_string(), "high".to_string()))?;
+            let protection = summary
+                .metrics
+                .vo_protection_activation_count
+                .unwrap_or(0.0);
+            let suppressed = summary
+                .metrics
+                .be_grant_suppressed_while_blocked_count
+                .unwrap_or(0.0);
+            ((protection + suppressed) > 0.0).then_some((
+                strategy_label(strategy),
+                protection,
+                suppressed,
+            ))
         })
         .collect();
     if rows.is_empty() {
         return None;
     }
-    let max_value = rows
-        .iter()
-        .flat_map(|(_, _, protection, suppressed)| [*protection, *suppressed])
-        .fold(0.0, f64::max);
-    let plot = PlotArea::new(style);
-    let mut svg = axis_frame(&plot, style, "Config", "Control events");
-    draw_y_ticks(&mut svg, &plot, style, max_value);
-    let group_width = plot.inner_w / rows.len() as f64;
-    let bar_width = group_width * 0.24;
-    for (index, (strategy, workload, protection, suppressed)) in rows.iter().enumerate() {
-        let center = plot.left + group_width * (index as f64 + 0.5);
-        draw_bar(
-            &mut svg,
-            &plot,
-            center - bar_width * 0.65,
-            bar_width,
-            *protection,
-            max_value,
-            VO_COLOR,
-        );
-        draw_bar(
-            &mut svg,
-            &plot,
-            center + bar_width * 0.65,
-            bar_width,
-            *suppressed,
-            max_value,
-            BE_COLOR,
-        );
-        svg.push_str(&text(
-            center,
-            plot.bottom + category_offset(style),
-            &compact_config_label(strategy, workload),
-            style.font_category,
-            "middle",
-            MUTED_COLOR,
-        ));
-    }
-    let items = [("VO prot.", VO_COLOR), ("BE supp.", BE_COLOR)];
-    let (lx, ly) = legend_origin_horizontal(&plot, LegendCorner::TopRight, &items, style);
-    svg.push_str(&legend_horizontal(lx, ly, &items, style));
+    let fig_style = if style.show_header {
+        style
+    } else {
+        style.tall_variant()
+    };
+    let footer = footer_band_height(fig_style);
+    let panel_gap = 20.0;
+    let panel_area_bottom = fig_style.height as f64 - fig_style.margin_bottom - footer;
+    let panel_area_top = fig_style.margin_top;
+    let panel_h = (panel_area_bottom - panel_area_top - panel_gap) / 2.0;
+    let top_plot = PlotArea {
+        left: fig_style.margin_left,
+        top: panel_area_top,
+        bottom: panel_area_top + panel_h,
+        inner_w: fig_style.width as f64 - fig_style.margin_left - fig_style.margin_right,
+        inner_h: panel_h,
+    };
+    let bottom_plot = PlotArea {
+        left: fig_style.margin_left,
+        top: top_plot.bottom + panel_gap,
+        bottom: panel_area_bottom,
+        inner_w: top_plot.inner_w,
+        inner_h: panel_area_bottom - top_plot.bottom - panel_gap,
+    };
+    let categories: Vec<&str> = rows.iter().map(|(label, _, _)| *label).collect();
+    let protection_values: Vec<f64> = rows.iter().map(|(_, protection, _)| *protection).collect();
+    let suppressed_values: Vec<f64> = rows.iter().map(|(_, _, suppressed)| *suppressed).collect();
+    let max_protection = protection_values.iter().copied().fold(0.0, f64::max);
+    let max_suppressed = suppressed_values.iter().copied().fold(0.0, f64::max);
+    let mut svg = String::new();
+    svg.push_str(&panel_axis_frame(
+        &top_plot,
+        fig_style,
+        "VO protection activations",
+        true,
+    ));
+    draw_y_ticks(&mut svg, &top_plot, fig_style, max_protection);
+    draw_grouped_bar_panel(
+        &mut svg,
+        &top_plot,
+        fig_style,
+        &categories,
+        &[("VO prot.", VO_COLOR, &protection_values)],
+        max_protection,
+        false,
+    );
+    svg.push_str(&panel_axis_frame(
+        &bottom_plot,
+        fig_style,
+        "BE grants suppressed",
+        true,
+    ));
+    draw_y_ticks(&mut svg, &bottom_plot, fig_style, max_suppressed);
+    draw_grouped_bar_panel(
+        &mut svg,
+        &bottom_plot,
+        fig_style,
+        &categories,
+        &[("BE supp.", BE_COLOR, &suppressed_values)],
+        max_suppressed,
+        true,
+    );
+    svg.push_str(&text(
+        bottom_plot.left + bottom_plot.inner_w / 2.0,
+        bottom_plot.bottom + axis_label_offset(fig_style),
+        "Strategy",
+        fig_style.font_axis,
+        "middle",
+        INK_COLOR,
+    ));
+    append_ieee_bottom_legend(
+        &mut svg,
+        &bottom_plot,
+        fig_style,
+        &[("VO protection", VO_COLOR), ("BE grants suppressed", BE_COLOR)],
+    );
     Some(Figure {
         slug: "v2x_control_actions_by_load",
         title: "Adaptive V2X Control Actions",
         question: "When tuned EDCA protects VO traffic, how often does it actively suppress BE contention?",
         body: svg,
+        style: Some(fig_style),
     })
 }
 
@@ -686,6 +764,7 @@ fn heatmap_figure(
         title,
         question,
         body: svg,
+        style: None,
     })
 }
 
@@ -809,12 +888,13 @@ struct PlotArea {
 
 impl PlotArea {
     fn new(style: FigureStyle) -> Self {
+        let footer = footer_band_height(style);
         Self {
             left: style.margin_left,
             top: style.margin_top,
-            bottom: style.height as f64 - style.margin_bottom,
+            bottom: style.height as f64 - style.margin_bottom - footer,
             inner_w: style.width as f64 - style.margin_left - style.margin_right,
-            inner_h: style.height as f64 - style.margin_top - style.margin_bottom,
+            inner_h: style.height as f64 - style.margin_top - style.margin_bottom - footer,
         }
     }
 
@@ -824,6 +904,16 @@ impl PlotArea {
 
     fn scale_y(&self, value: f64, max_value: f64) -> f64 {
         self.bottom - self.inner_h * value / padded_max(max_value)
+    }
+
+    fn scale_x_range(&self, value: f64, min_value: f64, max_value: f64) -> f64 {
+        let span = padded_range(min_value, max_value);
+        self.left + self.inner_w * (value - min_value) / span
+    }
+
+    fn scale_y_range(&self, value: f64, min_value: f64, max_value: f64) -> f64 {
+        let span = padded_range(min_value, max_value);
+        self.bottom - self.inner_h * (value - min_value) / span
     }
 }
 
@@ -892,9 +982,19 @@ fn axis_frame(plot: &PlotArea, style: FigureStyle, x_label: &str, y_label: &str)
 }
 
 fn draw_y_ticks(svg: &mut String, plot: &PlotArea, style: FigureStyle, max_value: f64) {
-    let ticks = tick_values(max_value, style.tick_count);
+    draw_y_ticks_ranged(svg, plot, style, 0.0, max_value);
+}
+
+fn draw_y_ticks_ranged(
+    svg: &mut String,
+    plot: &PlotArea,
+    style: FigureStyle,
+    min_value: f64,
+    max_value: f64,
+) {
+    let ticks = tick_values_ranged(min_value, max_value, style.tick_count);
     for (index, value) in ticks.iter().enumerate() {
-        let y = plot.scale_y(*value, max_value);
+        let y = plot.scale_y_range(*value, min_value, max_value);
         if index > 0 && index < ticks.len() - 1 {
             svg.push_str(&format!(
                 r##"<line x1="{:.2}" y1="{y:.2}" x2="{:.2}" y2="{y:.2}" stroke="{GRID_COLOR}" stroke-width="0.6"/>"##,
@@ -905,7 +1005,7 @@ fn draw_y_ticks(svg: &mut String, plot: &PlotArea, style: FigureStyle, max_value
         svg.push_str(&text(
             plot.left - tick_label_pad(style),
             y + 3.0,
-            &format_tick(*value, max_value),
+            &format_tick(*value, max_value - min_value),
             style.font_tick,
             "end",
             MUTED_COLOR,
@@ -914,9 +1014,19 @@ fn draw_y_ticks(svg: &mut String, plot: &PlotArea, style: FigureStyle, max_value
 }
 
 fn draw_x_ticks(svg: &mut String, plot: &PlotArea, style: FigureStyle, max_value: f64) {
-    let ticks = tick_values(max_value, style.tick_count);
+    draw_x_ticks_ranged(svg, plot, style, 0.0, max_value);
+}
+
+fn draw_x_ticks_ranged(
+    svg: &mut String,
+    plot: &PlotArea,
+    style: FigureStyle,
+    min_value: f64,
+    max_value: f64,
+) {
+    let ticks = tick_values_ranged(min_value, max_value, style.tick_count);
     for (index, value) in ticks.iter().enumerate() {
-        let x = plot.scale_x(*value, max_value);
+        let x = plot.scale_x_range(*value, min_value, max_value);
         if index > 0 && index < ticks.len() - 1 {
             svg.push_str(&format!(
                 r##"<line x1="{x:.2}" y1="{:.2}" x2="{x:.2}" y2="{:.2}" stroke="{GRID_COLOR}" stroke-width="0.6"/>"##,
@@ -927,7 +1037,7 @@ fn draw_x_ticks(svg: &mut String, plot: &PlotArea, style: FigureStyle, max_value
         svg.push_str(&text(
             x,
             plot.bottom + tick_label_offset(style),
-            &format_tick(*value, max_value),
+            &format_tick(*value, max_value - min_value),
             style.font_tick,
             "middle",
             MUTED_COLOR,
@@ -939,7 +1049,7 @@ fn category_offset(style: FigureStyle) -> f64 {
     if style.show_header {
         28.0
     } else {
-        f64::from(style.font_category) + 6.0
+        f64::from(style.font_category) + 8.0
     }
 }
 
@@ -947,13 +1057,28 @@ fn axis_label_offset(style: FigureStyle) -> f64 {
     if style.show_header {
         68.0
     } else {
-        category_offset(style) + f64::from(style.font_axis) + 2.0
+        category_offset(style) + f64::from(style.font_axis) + 6.0
     }
+}
+
+/// Space below the plot reserved for category labels, axis title, and legend.
+fn footer_band_height(style: FigureStyle) -> f64 {
+    if style.show_header {
+        0.0
+    } else {
+        category_offset(style) + f64::from(style.font_axis) + 16.0 + legend_box_size(style) * 2.0 + 14.0
+    }
+}
+
+fn footer_legend_y(style: FigureStyle) -> f64 {
+    style.height as f64 - style.margin_bottom - legend_box_size(style) - 6.0
 }
 
 fn y_axis_label_offset(style: FigureStyle) -> f64 {
     if style.show_header {
         92.0
+    } else if style.font_axis >= 14 {
+        tick_label_pad(style) + f64::from(style.font_axis) + 14.0
     } else {
         tick_label_pad(style) + f64::from(style.font_axis) + 6.0
     }
@@ -968,7 +1093,13 @@ fn heatmap_y_axis_label_offset(style: FigureStyle) -> f64 {
 }
 
 fn heatmap_row_label_gap(style: FigureStyle) -> f64 {
-    if style.show_header { 10.0 } else { 8.0 }
+    if style.show_header {
+        10.0
+    } else if style.font_category >= 13 {
+        14.0
+    } else {
+        8.0
+    }
 }
 
 fn tick_label_offset(style: FigureStyle) -> f64 {
@@ -980,13 +1111,23 @@ fn tick_label_offset(style: FigureStyle) -> f64 {
 }
 
 fn tick_label_pad(style: FigureStyle) -> f64 {
-    if style.show_header { 8.0 } else { 6.0 }
+    if style.show_header {
+        8.0
+    } else if style.font_tick >= 13 {
+        10.0
+    } else {
+        6.0
+    }
 }
 
 fn tick_values(max_value: f64, tick_count: u32) -> Vec<f64> {
-    let max = padded_max(max_value);
+    tick_values_ranged(0.0, max_value, tick_count)
+}
+
+fn tick_values_ranged(min_value: f64, max_value: f64, tick_count: u32) -> Vec<f64> {
+    let span = padded_range(min_value, max_value);
     (0..=tick_count)
-        .map(|index| max * index as f64 / tick_count as f64)
+        .map(|index| min_value + span * index as f64 / tick_count as f64)
         .collect()
 }
 
@@ -1054,6 +1195,11 @@ fn legend_origin_horizontal(
             plot.left + plot.inner_w - w - pad,
             plot.bottom - h - pad - tick_label_offset(style),
         ),
+        LegendCorner::BottomLeft => (plot.left + pad, plot.bottom - h - pad - tick_label_offset(style)),
+        LegendCorner::BottomCenter => (
+            plot.left + (plot.inner_w - w) / 2.0,
+            plot.bottom + category_offset(style) + f64::from(style.font_axis) + 4.0,
+        ),
     }
 }
 
@@ -1075,31 +1221,243 @@ fn legend_origin_vertical(
             plot.left + plot.inner_w - w - pad,
             plot.bottom - h - pad - tick_label_offset(style),
         ),
+        LegendCorner::BottomLeft => (plot.left + pad, plot.bottom - h - pad - tick_label_offset(style)),
+        LegendCorner::BottomCenter => (
+            plot.left + (plot.inner_w - w) / 2.0,
+            plot.bottom + category_offset(style) + f64::from(style.font_axis) + 4.0,
+        ),
     }
 }
 
 fn heatmap_plot_area(style: FigureStyle) -> PlotArea {
-    let extra_left = if style.show_header { 0.0 } else { 34.0 };
+    let extra_left = if style.show_header { 0.0 } else { 52.0 };
+    let footer = footer_band_height(style);
     PlotArea {
         left: style.margin_left + extra_left,
         top: style.margin_top,
-        bottom: style.height as f64 - style.margin_bottom,
+        bottom: style.height as f64 - style.margin_bottom - footer,
         inner_w: style.width as f64
             - style.margin_left
             - style.margin_right
             - extra_left,
-        inner_h: style.height as f64 - style.margin_top - style.margin_bottom,
+        inner_h: style.height as f64 - style.margin_top - style.margin_bottom - footer,
     }
 }
 
-fn compact_config_label(strategy: &str, workload: &str) -> String {
-    let workload_short = match workload {
-        "low" => "lo",
-        "medium" => "med",
-        "high" => "hi",
-        other => other,
+
+fn grouped_bar_width_factor(category_count: usize, series_count: usize) -> f64 {
+    let base = match category_count {
+        0..=3 => 0.34,
+        4..=5 => 0.30,
+        _ => 0.26,
     };
-    format!("{strategy},{workload_short}")
+    if series_count <= 1 {
+        base * 1.35
+    } else {
+        base
+    }
+}
+
+fn draw_grouped_bar_panel(
+    svg: &mut String,
+    plot: &PlotArea,
+    style: FigureStyle,
+    categories: &[&str],
+    series: &[(&str, &str, &[f64])],
+    max_value: f64,
+    show_category_labels: bool,
+) {
+    if categories.is_empty() || series.is_empty() {
+        return;
+    }
+    let group_width = plot.inner_w / categories.len() as f64;
+    let bar_width = group_width * grouped_bar_width_factor(categories.len(), series.len());
+    let offsets: Vec<f64> = if series.len() == 1 {
+        vec![0.0]
+    } else {
+        let spread = bar_width * 0.65;
+        series
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                let center = (series.len() - 1) as f64 / 2.0;
+                (index as f64 - center) * spread
+            })
+            .collect()
+    };
+    for (series_index, (_label, color, values)) in series.iter().enumerate() {
+        for (category_index, value) in values.iter().enumerate().take(categories.len()) {
+            let center = plot.left + group_width * (category_index as f64 + 0.5) + offsets[series_index];
+            draw_bar(
+                svg,
+                plot,
+                center,
+                bar_width,
+                *value,
+                max_value,
+                color,
+            );
+        }
+    }
+    if show_category_labels {
+        for (index, label) in categories.iter().enumerate() {
+            let center = plot.left + group_width * (index as f64 + 0.5);
+            svg.push_str(&text(
+                center,
+                plot.bottom + category_offset(style),
+                label,
+                style.font_category,
+                "middle",
+                MUTED_COLOR,
+            ));
+        }
+    }
+}
+
+fn panel_axis_frame(
+    plot: &PlotArea,
+    style: FigureStyle,
+    y_label: &str,
+    draw_bottom_axis: bool,
+) -> String {
+    let mut svg = String::new();
+    let stroke = style.axis_stroke;
+    if draw_bottom_axis {
+        svg.push_str(&format!(
+            r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK_COLOR}" stroke-width="{stroke}"/>"##,
+            plot.left,
+            plot.bottom,
+            plot.left + plot.inner_w,
+            plot.bottom
+        ));
+    }
+    svg.push_str(&format!(
+        r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK_COLOR}" stroke-width="{stroke}"/>"##,
+        plot.left, plot.top, plot.left, plot.bottom
+    ));
+    let y_axis_x = plot.left - y_axis_label_offset(style);
+    svg.push_str(&format!(
+        r##"<text x="{y_axis_x:.2}" y="{:.2}" text-anchor="middle" font-size="{}" fill="{INK_COLOR}" transform="rotate(-90 {y_axis_x:.2} {:.2})">{}</text>"##,
+        plot.top + plot.inner_h / 2.0,
+        style.font_axis,
+        plot.top + plot.inner_h / 2.0,
+        escape(y_label)
+    ));
+    svg
+}
+
+fn append_ieee_bottom_legend(
+    svg: &mut String,
+    plot: &PlotArea,
+    style: FigureStyle,
+    items: &[(&str, &str)],
+) {
+    if style.show_header {
+        let (lx, ly) = legend_origin_horizontal(plot, LegendCorner::TopRight, items, style);
+        svg.push_str(&legend_horizontal(lx, ly, items, style));
+        return;
+    }
+    let w = legend_horizontal_width(items, style);
+    let x = plot.left + (plot.inner_w - w) / 2.0;
+    let y = footer_legend_y(style);
+    svg.push_str(&legend_horizontal(x, y, items, style));
+}
+
+fn append_ieee_bottom_line_legend(
+    svg: &mut String,
+    plot: &PlotArea,
+    style: FigureStyle,
+    items: &[(&str, &str)],
+) {
+    if style.show_header {
+        let (lx, ly) = legend_origin_vertical(plot, LegendCorner::TopRight, items, style);
+        svg.push_str(&legend_lines(lx, ly, items, style));
+        return;
+    }
+    let w = legend_horizontal_width(items, style);
+    let x = plot.left + (plot.inner_w - w) / 2.0;
+    let y = footer_legend_y(style);
+    svg.push_str(&legend_lines_horizontal(x, y, items, style));
+}
+
+fn legend_lines_horizontal(x: f64, y: f64, items: &[(&str, &str)], style: FigureStyle) -> String {
+    let mut svg = String::new();
+    let box_size = legend_box_size(style);
+    let line_len = box_size * 1.4;
+    let mut cursor = x;
+    let row_y = y + box_size * 0.5;
+    for (index, (label, color)) in items.iter().enumerate() {
+        if index > 0 {
+            cursor += legend_horizontal_gap(style);
+        }
+        let dash = CDF_DASHES[index % CDF_DASHES.len()];
+        let dash_attr = if dash.is_empty() {
+            String::new()
+        } else {
+            format!(r#" stroke-dasharray="{dash}""#)
+        };
+        svg.push_str(&format!(
+            r#"<line x1="{cursor:.2}" y1="{row_y:.2}" x2="{:.2}" y2="{row_y:.2}" stroke="{color}" stroke-width="{:.2}"{dash_attr}/>"#,
+            cursor + line_len,
+            style.line_stroke
+        ));
+        svg.push_str(&text(
+            cursor + line_len + 4.0,
+            row_y + 3.0,
+            label,
+            style.font_legend,
+            "start",
+            INK_COLOR,
+        ));
+        cursor += legend_symbol_width(label, style);
+    }
+    svg
+}
+
+fn decimate_sorted(values: &[f64], max_points: usize) -> Vec<f64> {
+    if values.len() <= max_points {
+        return values.to_vec();
+    }
+    let step = (values.len() - 1) as f64 / (max_points - 1) as f64;
+    (0..max_points)
+        .map(|index| {
+            let source_index = (index as f64 * step).round() as usize;
+            values[source_index.min(values.len() - 1)]
+        })
+        .collect()
+}
+
+fn percentile(values: &[f64], ratio: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let index = ((sorted.len() - 1) as f64 * ratio.clamp(0.0, 1.0)).round() as usize;
+    sorted[index]
+}
+
+fn scatter_axis_bounds(delays: &[f64], jitters: &[f64]) -> (f64, f64, f64, f64) {
+    let max_x = delays.iter().copied().fold(0.0, f64::max);
+    let max_y = jitters.iter().copied().fold(0.0, f64::max);
+    if delays.is_empty() {
+        return (0.0, max_x.max(1.0), 0.0, max_y.max(1.0));
+    }
+    let threshold_x = max_x * 0.1;
+    let threshold_y = max_y * 0.1;
+    let clustered = delays
+        .iter()
+        .zip(jitters.iter())
+        .filter(|(delay, jitter)| **delay <= threshold_x && **jitter <= threshold_y)
+        .count();
+    let clustered_ratio = clustered as f64 / delays.len() as f64;
+    if clustered_ratio > 0.8 && max_x > 0.0 && max_y > 0.0 {
+        let min_x = (percentile(delays, 0.05) * 0.85).max(0.0);
+        let min_y = (percentile(jitters, 0.05) * 0.85).max(0.0);
+        (min_x, max_x, min_y, max_y)
+    } else {
+        (0.0, max_x, 0.0, max_y)
+    }
 }
 
 fn workload_marker_radius(workload: &str, style: FigureStyle) -> f64 {
@@ -1114,11 +1472,52 @@ fn workload_marker_radius(workload: &str, style: FigureStyle) -> f64 {
 
 fn workload_label(workload: &str) -> String {
     match workload {
-        "low" => "low".to_string(),
-        "medium" => "med".to_string(),
-        "high" => "high".to_string(),
+        "low" => "Low".to_string(),
+        "medium" => "Med".to_string(),
+        "high" => "High".to_string(),
         other => other.to_string(),
     }
+}
+
+fn workload_marker_legend_width(style: FigureStyle) -> f64 {
+    let scale = if style.show_header { 1.0 } else { 0.85 };
+    let entries = [("Low", 2.5), ("Med", 3.5), ("High", 4.5)];
+    let mut width = 0.0;
+    for (index, (label, _)) in entries.iter().enumerate() {
+        if index > 0 {
+            width += legend_horizontal_gap(style);
+        }
+        width += 18.0 * scale + label.len() as f64 * f64::from(style.font_legend) * 0.55;
+    }
+    width
+}
+
+fn workload_marker_legend_horizontal(x: f64, y: f64, style: FigureStyle) -> String {
+    let mut svg = String::new();
+    let entries = [("Low", 2.5), ("Med", 3.5), ("High", 4.5)];
+    let scale = if style.show_header { 1.0 } else { 0.85 };
+    let mut cursor = x;
+    let row_y = y + legend_box_size(style) * 0.5;
+    for (index, (label, radius)) in entries.iter().enumerate() {
+        if index > 0 {
+            cursor += legend_horizontal_gap(style);
+        }
+        let cx = cursor + 8.0 * scale;
+        let r = radius * scale;
+        svg.push_str(&format!(
+            r#"<circle cx="{cx:.2}" cy="{row_y:.2}" r="{r:.2}" fill="{MUTED_COLOR}" fill-opacity="0.65" stroke="{INK_COLOR}" stroke-width="0.5"/>"#
+        ));
+        svg.push_str(&text(
+            cx + r + 5.0,
+            row_y + 4.0,
+            label,
+            style.font_legend,
+            "start",
+            INK_COLOR,
+        ));
+        cursor += 18.0 * scale + label.len() as f64 * f64::from(style.font_legend) * 0.55;
+    }
+    svg
 }
 
 fn workload_marker_legend(x: f64, y: f64, style: FigureStyle) -> String {
@@ -1154,12 +1553,17 @@ fn draw_bar(
     max_value: f64,
     color: &str,
 ) {
-    let y = plot.scale_y(value, max_value);
+    let mut y = plot.scale_y(value, max_value);
+    let mut height = plot.bottom - y;
+    if value > 0.0 && height < MIN_BAR_HEIGHT {
+        height = MIN_BAR_HEIGHT;
+        y = plot.bottom - height;
+    }
     svg.push_str(&rect(
         center - width / 2.0,
         y,
         width,
-        plot.bottom - y,
+        height,
         color,
     ));
 }
@@ -1276,6 +1680,15 @@ fn padded_max(value: f64) -> f64 {
     }
 }
 
+fn padded_range(min_value: f64, max_value: f64) -> f64 {
+    let span = max_value - min_value;
+    if span <= 0.0 || !span.is_finite() {
+        1.0
+    } else {
+        span * 1.08
+    }
+}
+
 fn format_metric(value: f64) -> String {
     if value.abs() >= 100.0 {
         format!("{value:.0}")
@@ -1288,9 +1701,24 @@ fn format_metric(value: f64) -> String {
     }
 }
 
+fn format_count(value: f64) -> String {
+    let abs = value.abs();
+    if abs >= 1_000_000.0 {
+        format!("{:.1}M", value / 1_000_000.0)
+    } else if abs >= 1000.0 {
+        format!("{:.0}k", value / 1000.0)
+    } else if abs >= 1.0 {
+        format!("{value:.1}")
+    } else {
+        format!("{value:.2}")
+    }
+}
+
 fn format_tick(value: f64, max_value: f64) -> String {
     if max_value <= 1.05 && max_value > 0.0 {
         format!("{value:.1}")
+    } else if max_value >= 1000.0 {
+        format_count(value)
     } else {
         format_metric(value)
     }
@@ -1466,12 +1894,27 @@ impl ExportFormats {
 
 #[cfg(test)]
 mod tests {
-    use super::figure_order;
+    use super::{decimate_sorted, figure_order, format_count};
 
     #[test]
     fn figure_order_is_stable_by_slug() {
         assert_eq!(figure_order("p95_delay_priority_gap"), Some(1));
         assert_eq!(figure_order("v2x_control_actions_by_load"), Some(7));
         assert_eq!(figure_order("unknown_slug"), None);
+    }
+
+    #[test]
+    fn format_count_uses_k_suffix_for_large_values() {
+        assert_eq!(format_count(523_459.0), "523k");
+        assert_eq!(format_count(120_643.0), "121k");
+    }
+
+    #[test]
+    fn decimate_sorted_preserves_endpoints() {
+        let values: Vec<f64> = (0..1000).map(|value| value as f64).collect();
+        let decimated = decimate_sorted(&values, 150);
+        assert_eq!(decimated.len(), 150);
+        assert_eq!(decimated.first().copied(), Some(0.0));
+        assert_eq!(decimated.last().copied(), Some(999.0));
     }
 }
