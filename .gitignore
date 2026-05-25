@@ -52,6 +52,7 @@ results/
 *.qtenvrc
 *.elog
 *.anf
+kpi_dashboard/publication_figures/*
 
 # Secrets / local env files
 .env

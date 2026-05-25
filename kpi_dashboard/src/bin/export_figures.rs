@@ -13,7 +13,83 @@ const WORKLOADS: &[&str] = &["low", "medium", "high"];
 const COLORS: &[&str] = &["#4c78a8", "#f58518", "#54a24b", "#b279a2", "#e45756"];
 const BE_COLOR: &str = "#4c78a8";
 const VO_COLOR: &str = "#e45756";
+const INK_COLOR: &str = "#111827";
 const MUTED_COLOR: &str = "#6b7280";
+const GRID_COLOR: &str = "#e5e7eb";
+const FONT_SERIF: &str = r#""Times New Roman", Times, serif"#;
+/// Dash patterns for CDF curves (grayscale-friendly when printed).
+const CDF_DASHES: &[&str] = &["", "7,3", "3,3", "9,4,2,4", "2,2"];
+const DEFAULT_IEEE_WIDTH: u32 = 252;
+const DEFAULT_IEEE_HEIGHT: u32 = 216;
+
+/// Layout tuned for `\includegraphics[width=\linewidth]` in IEEE two-column figures
+/// (252 px wide ≈ 3.5 in at 72 pt/in; fonts are sized to stay legible at column width).
+#[derive(Debug, Clone, Copy)]
+struct FigureStyle {
+    width: u32,
+    height: u32,
+    margin_left: f64,
+    margin_top: f64,
+    margin_right: f64,
+    margin_bottom: f64,
+    font_axis: u32,
+    font_tick: u32,
+    font_category: u32,
+    font_legend: u32,
+    font_heatmap: u32,
+    show_header: bool,
+    axis_stroke: f64,
+    line_stroke: f64,
+    tick_count: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum LegendCorner {
+    TopRight,
+    BottomRight,
+}
+
+impl FigureStyle {
+    fn ieee_column() -> Self {
+        Self {
+            width: DEFAULT_IEEE_WIDTH,
+            height: DEFAULT_IEEE_HEIGHT,
+            margin_left: 48.0,
+            margin_top: 10.0,
+            margin_right: 10.0,
+            margin_bottom: 38.0,
+            font_axis: 11,
+            font_tick: 10,
+            font_category: 10,
+            font_legend: 9,
+            font_heatmap: 10,
+            show_header: false,
+            axis_stroke: 1.15,
+            line_stroke: 2.0,
+            tick_count: 4,
+        }
+    }
+
+    fn screen() -> Self {
+        Self {
+            width: 1400,
+            height: 900,
+            margin_left: 150.0,
+            margin_top: 145.0,
+            margin_right: 60.0,
+            margin_bottom: 100.0,
+            font_axis: 16,
+            font_tick: 13,
+            font_category: 14,
+            font_legend: 13,
+            font_heatmap: 14,
+            show_header: true,
+            axis_stroke: 1.4,
+            line_stroke: 2.4,
+            tick_count: 5,
+        }
+    }
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -28,16 +104,21 @@ struct Cli {
     #[arg(long, default_value = "publication_figures")]
     output: PathBuf,
 
-    #[arg(long, default_value = "svg,png,pdf")]
+    #[arg(long, default_value = "svg,pdf")]
     formats: String,
 
     #[arg(long, default_value_t = 300)]
     dpi: u32,
 
-    #[arg(long, default_value_t = 1400)]
+    /// IEEE single-column layout (3.5 in wide, tight margins, no in-figure titles).
+    #[arg(long = "ieee", action = clap::ArgAction::SetTrue, default_value_t = true)]
+    #[arg(long = "no-ieee", action = clap::ArgAction::SetFalse)]
+    ieee: bool,
+
+    #[arg(long, default_value_t = DEFAULT_IEEE_WIDTH)]
     width: u32,
 
-    #[arg(long, default_value_t = 900)]
+    #[arg(long, default_value_t = DEFAULT_IEEE_HEIGHT)]
     height: u32,
 
     #[arg(long)]
@@ -73,6 +154,17 @@ fn main() -> Result<()> {
         args.results.clone()
     };
     let formats = ExportFormats::parse(&args.formats);
+    let style = if args.ieee {
+        let mut ieee = FigureStyle::ieee_column();
+        ieee.width = args.width;
+        ieee.height = args.height;
+        ieee
+    } else {
+        let mut screen = FigureStyle::screen();
+        screen.width = args.width;
+        screen.height = args.height;
+        screen
+    };
     fs::create_dir_all(&args.output)
         .with_context(|| format!("failed to create {}", args.output.display()))?;
 
@@ -88,7 +180,7 @@ fn main() -> Result<()> {
             );
             Vec::new()
         });
-        let figures = build_figures(&dataset, &samples, args.width, args.height);
+        let figures = build_figures(&dataset, &samples, style);
 
         for figure in figures {
             let Some(order) = figure_order(figure.slug) else {
@@ -97,7 +189,7 @@ fn main() -> Result<()> {
             };
             let base_name = format!("fig_{:02}_{}_{}", order, figure.slug, density);
             let svg_path = args.output.join(format!("{base_name}.svg"));
-            write_svg(&svg_path, args.width, args.height, &figure)?;
+            write_svg(&svg_path, style, &figure)?;
             if formats.png {
                 convert_svg(
                     &svg_path,
@@ -124,30 +216,29 @@ fn main() -> Result<()> {
 fn build_figures(
     dataset: &DashboardDataset,
     samples: &[DelaySample],
-    width: u32,
-    height: u32,
+    style: FigureStyle,
 ) -> Vec<Figure> {
     let mut figures = Vec::new();
     let matrix = summary_matrix(&dataset.config_summary);
-    if let Some(figure) = p95_priority_gap_figure(&matrix, width, height) {
+    if let Some(figure) = p95_priority_gap_figure(&matrix, style) {
         figures.push(figure);
     }
-    if let Some(figure) = drop_rate_heatmap_figure(&matrix, width, height) {
+    if let Some(figure) = drop_rate_heatmap_figure(&matrix, style) {
         figures.push(figure);
     }
-    if let Some(figure) = vo_reception_heatmap_figure(&matrix, width, height) {
+    if let Some(figure) = vo_reception_heatmap_figure(&matrix, style) {
         figures.push(figure);
     }
-    if let Some(figure) = jitter_tradeoff_figure(&matrix, width, height) {
+    if let Some(figure) = jitter_tradeoff_figure(&matrix, style) {
         figures.push(figure);
     }
-    if let Some(figure) = drop_attribution_figure(&matrix, width, height) {
+    if let Some(figure) = drop_attribution_figure(&matrix, style) {
         figures.push(figure);
     }
-    if let Some(figure) = vo_delay_cdf_figure(samples, width, height) {
+    if let Some(figure) = vo_delay_cdf_figure(samples, style) {
         figures.push(figure);
     }
-    if let Some(figure) = control_actions_figure(&matrix, width, height) {
+    if let Some(figure) = control_actions_figure(&matrix, style) {
         figures.push(figure);
     }
     figures
@@ -155,8 +246,7 @@ fn build_figures(
 
 fn p95_priority_gap_figure(
     matrix: &BTreeMap<(String, String), ConfigSummary>,
-    width: u32,
-    height: u32,
+    style: FigureStyle,
 ) -> Option<Figure> {
     let rows: Vec<_> = STRATEGIES
         .iter()
@@ -174,9 +264,9 @@ fn p95_priority_gap_figure(
         .iter()
         .flat_map(|(_, be, vo)| [*be, *vo])
         .fold(0.0, f64::max);
-    let plot = PlotArea::new(width, height);
-    let mut svg = axis_frame(&plot, "MAC strategy", "P95 delay (ms)");
-    draw_y_ticks(&mut svg, &plot, max_value);
+    let plot = PlotArea::new(style);
+    let mut svg = axis_frame(&plot, style, "Strategy", "P95 delay (ms)");
+    draw_y_ticks(&mut svg, &plot, style, max_value);
     let group_width = plot.inner_w / rows.len() as f64;
     let bar_width = group_width * 0.26;
     for (index, (label, be, vo)) in rows.iter().enumerate() {
@@ -201,18 +291,16 @@ fn p95_priority_gap_figure(
         );
         svg.push_str(&text(
             center,
-            plot.bottom + 28.0,
+            plot.bottom + category_offset(style),
             label,
-            13,
+            style.font_category,
             "middle",
             MUTED_COLOR,
         ));
     }
-    svg.push_str(&legend(
-        plot.left + 10.0,
-        plot.top + 8.0,
-        &[("BE P95", BE_COLOR), ("VO P95", VO_COLOR)],
-    ));
+    let items = [("BE P95", BE_COLOR), ("VO P95", VO_COLOR)];
+    let (lx, ly) = legend_origin_horizontal(&plot, LegendCorner::TopRight, &items, style);
+    svg.push_str(&legend_horizontal(lx, ly, &items, style));
     Some(Figure {
         slug: "p95_delay_priority_gap",
         title: "Tail Delay Priority Gap Under High Load",
@@ -223,42 +311,35 @@ fn p95_priority_gap_figure(
 
 fn drop_rate_heatmap_figure(
     matrix: &BTreeMap<(String, String), ConfigSummary>,
-    width: u32,
-    height: u32,
+    style: FigureStyle,
 ) -> Option<Figure> {
     heatmap_figure(
         matrix,
-        width,
-        height,
+        style,
         "mac_drop_per_tx",
         "mac_drop_rate_by_strategy_load",
         "MAC Drop Rate Across Strategy and Load",
         "How quickly does contention translate into normalized packet loss as offered load grows?",
-        "MAC drops / app TX",
     )
 }
 
 fn vo_reception_heatmap_figure(
     matrix: &BTreeMap<(String, String), ConfigSummary>,
-    width: u32,
-    height: u32,
+    style: FigureStyle,
 ) -> Option<Figure> {
     heatmap_figure(
         matrix,
-        width,
-        height,
+        style,
         "vo_rx_per_tx",
         "vo_reception_by_strategy_load",
         "VO Reception Across Strategy and Load",
         "Which MAC strategy preserves crash-message reception as load increases?",
-        "VO RX / logical TX",
     )
 }
 
 fn jitter_tradeoff_figure(
     matrix: &BTreeMap<(String, String), ConfigSummary>,
-    width: u32,
-    height: u32,
+    style: FigureStyle,
 ) -> Option<Figure> {
     let mut points = Vec::new();
     for ((strategy, workload), summary) in matrix {
@@ -292,36 +373,25 @@ fn jitter_tradeoff_figure(
     }
     let max_x = points.iter().map(|point| point.3).fold(0.0, f64::max);
     let max_y = points.iter().map(|point| point.4).fold(0.0, f64::max);
-    let plot = PlotArea::new(width, height);
-    let mut svg = axis_frame(&plot, "Mean delay (ms)", "Mean absolute jitter (ms)");
-    draw_x_ticks(&mut svg, &plot, max_x);
-    draw_y_ticks(&mut svg, &plot, max_y);
-    for (strategy, workload, ac, delay, jitter, color) in points {
+    let plot = PlotArea::new(style);
+    let mut svg = axis_frame(&plot, style, "Mean delay (ms)", "Mean |jitter| (ms)");
+    draw_x_ticks(&mut svg, &plot, style, max_x);
+    draw_y_ticks(&mut svg, &plot, style, max_y);
+    for (strategy, workload, _ac, delay, jitter, color) in points {
         let x = plot.scale_x(delay, max_x);
         let y = plot.scale_y(jitter, max_y);
-        let radius = match workload {
-            "low" => 4.0,
-            "medium" => 6.0,
-            "high" => 8.0,
-            _ => 5.0,
-        };
+        let radius = workload_marker_radius(workload, style);
         svg.push_str(&format!(
-            r#"<circle cx="{x:.2}" cy="{y:.2}" r="{radius:.2}" fill="{color}" fill-opacity="0.78"/>"#
+            r#"<circle cx="{x:.2}" cy="{y:.2}" r="{radius:.2}" fill="{color}" fill-opacity="0.9" stroke="{INK_COLOR}" stroke-width="0.6"/>"#
         ));
-        svg.push_str(&text(
-            x + 7.0,
-            y - 7.0,
-            &format!("{strategy} {workload} {ac}"),
-            10,
-            "start",
-            MUTED_COLOR,
-        ));
+        let _ = strategy;
     }
-    svg.push_str(&legend(
-        plot.left + 10.0,
-        plot.top + 8.0,
-        &[("BE", BE_COLOR), ("VO", VO_COLOR)],
-    ));
+    let color_items = [("BE", BE_COLOR), ("VO", VO_COLOR)];
+    let (lx, ly) = legend_origin_horizontal(&plot, LegendCorner::TopRight, &color_items, style);
+    svg.push_str(&legend_horizontal(lx, ly, &color_items, style));
+    let marker_items = [("low", ""), ("med", ""), ("high", "")];
+    let (mx, my) = legend_origin_vertical(&plot, LegendCorner::BottomRight, &marker_items, style);
+    svg.push_str(&workload_marker_legend(mx, my, style));
     Some(Figure {
         slug: "latency_jitter_tradeoff",
         title: "Latency and Jitter Tradeoff",
@@ -332,8 +402,7 @@ fn jitter_tradeoff_figure(
 
 fn drop_attribution_figure(
     matrix: &BTreeMap<(String, String), ConfigSummary>,
-    width: u32,
-    height: u32,
+    style: FigureStyle,
 ) -> Option<Figure> {
     let rows: Vec<_> = STRATEGIES
         .iter()
@@ -352,9 +421,9 @@ fn drop_attribution_figure(
         .iter()
         .map(|(_, be, vo, other)| be + vo + other)
         .fold(0.0, f64::max);
-    let plot = PlotArea::new(width, height);
-    let mut svg = axis_frame(&plot, "MAC drops (count)", "MAC strategy");
-    draw_y_ticks(&mut svg, &plot, max_value);
+    let plot = PlotArea::new(style);
+    let mut svg = axis_frame(&plot, style, "Strategy", "MAC drops");
+    draw_y_ticks(&mut svg, &plot, style, max_value);
     let group_width = plot.inner_w / rows.len() as f64;
     let bar_width = group_width * 0.42;
     for (index, (label, be, vo, other)) in rows.iter().enumerate() {
@@ -368,22 +437,16 @@ fn drop_attribution_figure(
         }
         svg.push_str(&text(
             x + bar_width / 2.0,
-            plot.bottom + 28.0,
+            plot.bottom + category_offset(style),
             label,
-            13,
+            style.font_category,
             "middle",
             MUTED_COLOR,
         ));
     }
-    svg.push_str(&legend(
-        plot.left + 10.0,
-        plot.top + 8.0,
-        &[
-            ("BE", BE_COLOR),
-            ("VO", VO_COLOR),
-            ("Unclassified", "#9ca3af"),
-        ],
-    ));
+    let items = [("BE", BE_COLOR), ("VO", VO_COLOR), ("Other", "#9ca3af")];
+    let (lx, ly) = legend_origin_horizontal(&plot, LegendCorner::TopRight, &items, style);
+    svg.push_str(&legend_horizontal(lx, ly, &items, style));
     Some(Figure {
         slug: "mac_drop_attribution_high_load",
         title: "Packet-Drop Attribution Under High Load",
@@ -392,7 +455,7 @@ fn drop_attribution_figure(
     })
 }
 
-fn vo_delay_cdf_figure(samples: &[DelaySample], width: u32, height: u32) -> Option<Figure> {
+fn vo_delay_cdf_figure(samples: &[DelaySample], style: FigureStyle) -> Option<Figure> {
     let mut by_strategy: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     for sample in samples {
         if sample.ac == AccessCategory::Vo && sample.config.ends_with("_netload_high") {
@@ -412,10 +475,10 @@ fn vo_delay_cdf_figure(samples: &[DelaySample], width: u32, height: u32) -> Opti
         .values()
         .flat_map(|values| values.iter().copied())
         .fold(0.0, f64::max);
-    let plot = PlotArea::new(width, height);
-    let mut svg = axis_frame(&plot, "VO end-to-end delay (ms)", "Empirical CDF");
-    draw_x_ticks(&mut svg, &plot, max_x);
-    draw_y_ticks(&mut svg, &plot, 1.0);
+    let plot = PlotArea::new(style);
+    let mut svg = axis_frame(&plot, style, "VO delay (ms)", "CDF");
+    draw_x_ticks(&mut svg, &plot, style, max_x);
+    draw_y_ticks(&mut svg, &plot, style, 1.0);
     let mut legend_items = Vec::new();
     for (index, (strategy, values)) in by_strategy.iter_mut().enumerate() {
         values.sort_by(f64::total_cmp);
@@ -426,10 +489,16 @@ fn vo_delay_cdf_figure(samples: &[DelaySample], width: u32, height: u32) -> Opti
             let y = plot.scale_y((rank + 1) as f64 / values.len() as f64, 1.0);
             points.push_str(&format!("{x:.2},{y:.2} "));
         }
+        let dash = CDF_DASHES[index % CDF_DASHES.len()];
+        let dash_attr = if dash.is_empty() {
+            String::new()
+        } else {
+            format!(r#" stroke-dasharray="{dash}""#)
+        };
         svg.push_str(&format!(
-            r#"<polyline points="{}" fill="none" stroke="{}" stroke-width="2.4"/>"#,
+            r#"<polyline points="{}" fill="none" stroke="{color}" stroke-width="{:.2}"{dash_attr}/>"#,
             points.trim(),
-            color
+            style.line_stroke
         ));
         legend_items.push((strategy_label(strategy).to_string(), color.to_string()));
     }
@@ -437,7 +506,8 @@ fn vo_delay_cdf_figure(samples: &[DelaySample], width: u32, height: u32) -> Opti
         .iter()
         .map(|(label, color)| (label.as_str(), color.as_str()))
         .collect();
-    svg.push_str(&legend(plot.left + 10.0, plot.top + 8.0, &legend_refs));
+    let (lx, ly) = legend_origin_vertical(&plot, LegendCorner::TopRight, &legend_refs, style);
+    svg.push_str(&legend_lines(lx, ly, &legend_refs, style));
     Some(Figure {
         slug: "vo_delay_cdf_high_load",
         title: "Crash VO Delay Distribution Under High Load",
@@ -449,8 +519,7 @@ fn vo_delay_cdf_figure(samples: &[DelaySample], width: u32, height: u32) -> Opti
 
 fn control_actions_figure(
     matrix: &BTreeMap<(String, String), ConfigSummary>,
-    width: u32,
-    height: u32,
+    style: FigureStyle,
 ) -> Option<Figure> {
     let rows: Vec<_> = ["stable", "guarded", "emergency"]
         .iter()
@@ -481,9 +550,9 @@ fn control_actions_figure(
         .iter()
         .flat_map(|(_, _, protection, suppressed)| [*protection, *suppressed])
         .fold(0.0, f64::max);
-    let plot = PlotArea::new(width, height);
-    let mut svg = axis_frame(&plot, "Strategy/load", "Control events (count)");
-    draw_y_ticks(&mut svg, &plot, max_value);
+    let plot = PlotArea::new(style);
+    let mut svg = axis_frame(&plot, style, "Config", "Control events");
+    draw_y_ticks(&mut svg, &plot, style, max_value);
     let group_width = plot.inner_w / rows.len() as f64;
     let bar_width = group_width * 0.24;
     for (index, (strategy, workload, protection, suppressed)) in rows.iter().enumerate() {
@@ -508,21 +577,16 @@ fn control_actions_figure(
         );
         svg.push_str(&text(
             center,
-            plot.bottom + 28.0,
-            &format!("{strategy}\n{workload}"),
-            12,
+            plot.bottom + category_offset(style),
+            &compact_config_label(strategy, workload),
+            style.font_category,
             "middle",
             MUTED_COLOR,
         ));
     }
-    svg.push_str(&legend(
-        plot.left + 10.0,
-        plot.top + 8.0,
-        &[
-            ("VO protection activations", VO_COLOR),
-            ("BE grants suppressed", BE_COLOR),
-        ],
-    ));
+    let items = [("VO prot.", VO_COLOR), ("BE supp.", BE_COLOR)];
+    let (lx, ly) = legend_origin_horizontal(&plot, LegendCorner::TopRight, &items, style);
+    svg.push_str(&legend_horizontal(lx, ly, &items, style));
     Some(Figure {
         slug: "v2x_control_actions_by_load",
         title: "Adaptive V2X Control Actions",
@@ -533,13 +597,11 @@ fn control_actions_figure(
 
 fn heatmap_figure(
     matrix: &BTreeMap<(String, String), ConfigSummary>,
-    width: u32,
-    height: u32,
+    style: FigureStyle,
     metric_key: &str,
     slug: &'static str,
     title: &'static str,
     question: &'static str,
-    color_label: &str,
 ) -> Option<Figure> {
     let mut values = Vec::new();
     for strategy in STRATEGIES {
@@ -558,25 +620,17 @@ fn heatmap_figure(
         .iter()
         .map(|(_, _, value)| *value)
         .fold(0.0, f64::max);
-    let plot = PlotArea::new(width, height);
+    let plot = heatmap_plot_area(style);
     let cell_w = plot.inner_w / WORKLOADS.len() as f64;
     let cell_h = plot.inner_h / STRATEGIES.len() as f64;
     let mut svg = String::new();
-    svg.push_str(&text(
-        plot.left + plot.inner_w / 2.0,
-        plot.top - 32.0,
-        color_label,
-        14,
-        "middle",
-        MUTED_COLOR,
-    ));
     for (row, strategy) in STRATEGIES.iter().enumerate() {
         let y = plot.top + row as f64 * cell_h;
         svg.push_str(&text(
-            plot.left - 12.0,
-            y + cell_h / 2.0 + 4.0,
+            plot.left - heatmap_row_label_gap(style),
+            y + cell_h / 2.0 + 3.0,
             strategy_label(strategy),
-            13,
+            style.font_category,
             "end",
             MUTED_COLOR,
         ));
@@ -588,16 +642,16 @@ fn heatmap_figure(
             let color = value
                 .map(|value| heat_color(value, max_value))
                 .unwrap_or_else(|| "#f3f4f6".to_string());
-            svg.push_str(&rect(x + 1.0, y + 1.0, cell_w - 2.0, cell_h - 2.0, &color));
+            svg.push_str(&rect_fill(x + 1.0, y + 1.0, cell_w - 2.0, cell_h - 2.0, &color));
             svg.push_str(&text(
                 x + cell_w / 2.0,
-                y + cell_h / 2.0 + 4.0,
+                y + cell_h / 2.0 + 3.0,
                 &value
                     .map(format_metric)
-                    .unwrap_or_else(|| "N/A".to_string()),
-                14,
+                    .unwrap_or_else(|| "—".to_string()),
+                style.font_heatmap,
                 "middle",
-                "#111827",
+                INK_COLOR,
             ));
         }
     }
@@ -605,13 +659,28 @@ fn heatmap_figure(
         let x = plot.left + col as f64 * cell_w + cell_w / 2.0;
         svg.push_str(&text(
             x,
-            plot.bottom + 28.0,
-            workload,
-            13,
+            plot.bottom + category_offset(style),
+            &workload_label(workload),
+            style.font_category,
             "middle",
             MUTED_COLOR,
         ));
     }
+    svg.push_str(&text(
+        plot.left + plot.inner_w / 2.0,
+        plot.bottom + axis_label_offset(style),
+        "Load",
+        style.font_axis,
+        "middle",
+        INK_COLOR,
+    ));
+    let y_axis_x = plot.left - heatmap_y_axis_label_offset(style);
+    svg.push_str(&format!(
+        r##"<text x="{y_axis_x:.2}" y="{:.2}" text-anchor="middle" font-size="{}" fill="{INK_COLOR}" transform="rotate(-90 {y_axis_x:.2} {:.2})">Strategy</text>"##,
+        plot.top + plot.inner_h / 2.0,
+        style.font_axis,
+        plot.top + plot.inner_h / 2.0,
+    ));
     Some(Figure {
         slug,
         title,
@@ -739,17 +808,13 @@ struct PlotArea {
 }
 
 impl PlotArea {
-    fn new(width: u32, height: u32) -> Self {
-        let left = 150.0;
-        let top = 145.0;
-        let right = 60.0;
-        let bottom_margin = 100.0;
+    fn new(style: FigureStyle) -> Self {
         Self {
-            left,
-            top,
-            bottom: height as f64 - bottom_margin,
-            inner_w: width as f64 - left - right,
-            inner_h: height as f64 - top - bottom_margin,
+            left: style.margin_left,
+            top: style.margin_top,
+            bottom: style.height as f64 - style.margin_bottom,
+            inner_w: style.width as f64 - style.margin_left - style.margin_right,
+            inner_h: style.height as f64 - style.margin_top - style.margin_bottom,
         }
     }
 
@@ -762,105 +827,322 @@ impl PlotArea {
     }
 }
 
-fn write_svg(path: &Path, width: u32, height: u32, figure: &Figure) -> Result<()> {
+fn write_svg(path: &Path, style: FigureStyle, figure: &Figure) -> Result<()> {
+    let width = style.width;
+    let height = style.height;
     let mut file =
         File::create(path).with_context(|| format!("failed to create {}", path.display()))?;
     writeln!(
         file,
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">"#
     )?;
+    writeln!(file, r##"<rect width="100%" height="100%" fill="#ffffff"/>"##)?;
     writeln!(
         file,
-        r##"<rect width="100%" height="100%" fill="#ffffff"/>"##
+        r#"<style>text {{ font-family: {FONT_SERIF}; }}</style>"#
     )?;
-    writeln!(
-        file,
-        r#"<style>text {{ font-family: "Arial", "Helvetica", sans-serif; }} .title {{ font-weight: 700; }} .question {{ font-style: italic; }}</style>"#
-    )?;
-    writeln!(
-        file,
-        "{}",
-        text(40.0, 48.0, figure.title, 26, "start", "#111827")
-    )?;
-    writeln!(
-        file,
-        "{}",
-        text(40.0, 82.0, figure.question, 16, "start", MUTED_COLOR)
-    )?;
+    if style.show_header {
+        writeln!(
+            file,
+            "{}",
+            text(8.0, 18.0, figure.title, 11, "start", INK_COLOR)
+        )?;
+        writeln!(
+            file,
+            "{}",
+            text(8.0, 32.0, figure.question, 9, "start", MUTED_COLOR)
+        )?;
+    }
     writeln!(file, "{}", figure.body)?;
     writeln!(file, "</svg>")?;
     Ok(())
 }
 
-fn axis_frame(plot: &PlotArea, x_label: &str, y_label: &str) -> String {
+fn axis_frame(plot: &PlotArea, style: FigureStyle, x_label: &str, y_label: &str) -> String {
     let mut svg = String::new();
+    let stroke = style.axis_stroke;
     svg.push_str(&format!(
-        r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="#111827" stroke-width="1.4"/>"##,
+        r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK_COLOR}" stroke-width="{stroke}"/>"##,
         plot.left,
         plot.bottom,
         plot.left + plot.inner_w,
         plot.bottom
     ));
     svg.push_str(&format!(
-        r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="#111827" stroke-width="1.4"/>"##,
+        r##"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK_COLOR}" stroke-width="{stroke}"/>"##,
         plot.left, plot.top, plot.left, plot.bottom
     ));
     svg.push_str(&text(
         plot.left + plot.inner_w / 2.0,
-        plot.bottom + 68.0,
+        plot.bottom + axis_label_offset(style),
         x_label,
-        15,
+        style.font_axis,
         "middle",
-        "#111827",
+        INK_COLOR,
     ));
+    let y_axis_x = plot.left - y_axis_label_offset(style);
     svg.push_str(&format!(
-        r##"<text x="{:.2}" y="{:.2}" text-anchor="middle" font-size="15" fill="#111827" transform="rotate(-90 {:.2} {:.2})">{}</text>"##,
-        plot.left - 92.0,
+        r##"<text x="{y_axis_x:.2}" y="{:.2}" text-anchor="middle" font-size="{}" fill="{INK_COLOR}" transform="rotate(-90 {y_axis_x:.2} {:.2})">{}</text>"##,
         plot.top + plot.inner_h / 2.0,
-        plot.left - 92.0,
+        style.font_axis,
         plot.top + plot.inner_h / 2.0,
         escape(y_label)
     ));
     svg
 }
 
-fn draw_y_ticks(svg: &mut String, plot: &PlotArea, max_value: f64) {
-    for index in 0..=5 {
-        let value = padded_max(max_value) * index as f64 / 5.0;
-        let y = plot.scale_y(value, max_value);
-        svg.push_str(&format!(
-            r##"<line x1="{:.2}" y1="{y:.2}" x2="{:.2}" y2="{y:.2}" stroke="#e5e7eb"/>"##,
-            plot.left,
-            plot.left + plot.inner_w
-        ));
+fn draw_y_ticks(svg: &mut String, plot: &PlotArea, style: FigureStyle, max_value: f64) {
+    let ticks = tick_values(max_value, style.tick_count);
+    for (index, value) in ticks.iter().enumerate() {
+        let y = plot.scale_y(*value, max_value);
+        if index > 0 && index < ticks.len() - 1 {
+            svg.push_str(&format!(
+                r##"<line x1="{:.2}" y1="{y:.2}" x2="{:.2}" y2="{y:.2}" stroke="{GRID_COLOR}" stroke-width="0.6"/>"##,
+                plot.left,
+                plot.left + plot.inner_w
+            ));
+        }
         svg.push_str(&text(
-            plot.left - 10.0,
-            y + 4.0,
-            &format_metric(value),
-            12,
+            plot.left - tick_label_pad(style),
+            y + 3.0,
+            &format_tick(*value, max_value),
+            style.font_tick,
             "end",
             MUTED_COLOR,
         ));
     }
 }
 
-fn draw_x_ticks(svg: &mut String, plot: &PlotArea, max_value: f64) {
-    for index in 0..=5 {
-        let value = padded_max(max_value) * index as f64 / 5.0;
-        let x = plot.scale_x(value, max_value);
-        svg.push_str(&format!(
-            r##"<line x1="{x:.2}" y1="{:.2}" x2="{x:.2}" y2="{:.2}" stroke="#e5e7eb"/>"##,
-            plot.top, plot.bottom
-        ));
+fn draw_x_ticks(svg: &mut String, plot: &PlotArea, style: FigureStyle, max_value: f64) {
+    let ticks = tick_values(max_value, style.tick_count);
+    for (index, value) in ticks.iter().enumerate() {
+        let x = plot.scale_x(*value, max_value);
+        if index > 0 && index < ticks.len() - 1 {
+            svg.push_str(&format!(
+                r##"<line x1="{x:.2}" y1="{:.2}" x2="{x:.2}" y2="{:.2}" stroke="{GRID_COLOR}" stroke-width="0.6"/>"##,
+                plot.top,
+                plot.bottom
+            ));
+        }
         svg.push_str(&text(
             x,
-            plot.bottom + 24.0,
-            &format_metric(value),
-            12,
+            plot.bottom + tick_label_offset(style),
+            &format_tick(*value, max_value),
+            style.font_tick,
             "middle",
             MUTED_COLOR,
         ));
     }
+}
+
+fn category_offset(style: FigureStyle) -> f64 {
+    if style.show_header {
+        28.0
+    } else {
+        f64::from(style.font_category) + 6.0
+    }
+}
+
+fn axis_label_offset(style: FigureStyle) -> f64 {
+    if style.show_header {
+        68.0
+    } else {
+        category_offset(style) + f64::from(style.font_axis) + 2.0
+    }
+}
+
+fn y_axis_label_offset(style: FigureStyle) -> f64 {
+    if style.show_header {
+        92.0
+    } else {
+        tick_label_pad(style) + f64::from(style.font_axis) + 6.0
+    }
+}
+
+fn heatmap_y_axis_label_offset(style: FigureStyle) -> f64 {
+    if style.show_header {
+        110.0
+    } else {
+        heatmap_row_label_gap(style) + f64::from(style.font_axis) + 4.0
+    }
+}
+
+fn heatmap_row_label_gap(style: FigureStyle) -> f64 {
+    if style.show_header { 10.0 } else { 8.0 }
+}
+
+fn tick_label_offset(style: FigureStyle) -> f64 {
+    if style.show_header {
+        24.0
+    } else {
+        f64::from(style.font_tick) + 4.0
+    }
+}
+
+fn tick_label_pad(style: FigureStyle) -> f64 {
+    if style.show_header { 8.0 } else { 6.0 }
+}
+
+fn tick_values(max_value: f64, tick_count: u32) -> Vec<f64> {
+    let max = padded_max(max_value);
+    (0..=tick_count)
+        .map(|index| max * index as f64 / tick_count as f64)
+        .collect()
+}
+
+fn legend_item_stride(style: FigureStyle) -> f64 {
+    f64::from(style.font_legend) + 4.0
+}
+
+fn legend_box_size(style: FigureStyle) -> f64 {
+    if style.show_header {
+        14.0
+    } else {
+        f64::from(style.font_legend) + 1.0
+    }
+}
+
+fn legend_symbol_width(label: &str, style: FigureStyle) -> f64 {
+    legend_box_size(style) + 3.0 + label.len() as f64 * f64::from(style.font_legend) * 0.52
+}
+
+fn legend_horizontal_width(items: &[(&str, &str)], style: FigureStyle) -> f64 {
+    let mut width = 0.0;
+    for (index, (label, _)) in items.iter().enumerate() {
+        if index > 0 {
+            width += legend_horizontal_gap(style);
+        }
+        width += legend_symbol_width(label, style);
+    }
+    width
+}
+
+fn legend_vertical_height(rows: usize, style: FigureStyle) -> f64 {
+    if rows == 0 {
+        0.0
+    } else {
+        legend_item_stride(style) * (rows - 1) as f64 + legend_box_size(style)
+    }
+}
+
+fn legend_horizontal_gap(style: FigureStyle) -> f64 {
+    if style.show_header { 18.0 } else { 10.0 }
+}
+
+fn legend_vertical_width(items: &[(&str, &str)], style: FigureStyle) -> f64 {
+    items
+        .iter()
+        .map(|(label, _)| legend_symbol_width(label, style))
+        .fold(0.0, f64::max)
+}
+
+fn legend_origin_horizontal(
+    plot: &PlotArea,
+    corner: LegendCorner,
+    items: &[(&str, &str)],
+    style: FigureStyle,
+) -> (f64, f64) {
+    let pad = if style.show_header { 12.0 } else { 6.0 };
+    let w = legend_horizontal_width(items, style);
+    let h = legend_box_size(style);
+    match corner {
+        LegendCorner::TopRight => (
+            plot.left + plot.inner_w - w - pad,
+            plot.top + pad,
+        ),
+        LegendCorner::BottomRight => (
+            plot.left + plot.inner_w - w - pad,
+            plot.bottom - h - pad - tick_label_offset(style),
+        ),
+    }
+}
+
+fn legend_origin_vertical(
+    plot: &PlotArea,
+    corner: LegendCorner,
+    items: &[(&str, &str)],
+    style: FigureStyle,
+) -> (f64, f64) {
+    let pad = if style.show_header { 12.0 } else { 6.0 };
+    let w = legend_vertical_width(items, style);
+    let h = legend_vertical_height(items.len(), style);
+    match corner {
+        LegendCorner::TopRight => (
+            plot.left + plot.inner_w - w - pad,
+            plot.top + pad,
+        ),
+        LegendCorner::BottomRight => (
+            plot.left + plot.inner_w - w - pad,
+            plot.bottom - h - pad - tick_label_offset(style),
+        ),
+    }
+}
+
+fn heatmap_plot_area(style: FigureStyle) -> PlotArea {
+    let extra_left = if style.show_header { 0.0 } else { 34.0 };
+    PlotArea {
+        left: style.margin_left + extra_left,
+        top: style.margin_top,
+        bottom: style.height as f64 - style.margin_bottom,
+        inner_w: style.width as f64
+            - style.margin_left
+            - style.margin_right
+            - extra_left,
+        inner_h: style.height as f64 - style.margin_top - style.margin_bottom,
+    }
+}
+
+fn compact_config_label(strategy: &str, workload: &str) -> String {
+    let workload_short = match workload {
+        "low" => "lo",
+        "medium" => "med",
+        "high" => "hi",
+        other => other,
+    };
+    format!("{strategy},{workload_short}")
+}
+
+fn workload_marker_radius(workload: &str, style: FigureStyle) -> f64 {
+    let scale = if style.show_header { 1.0 } else { 0.72 };
+    match workload {
+        "low" => 2.5 * scale,
+        "medium" => 3.5 * scale,
+        "high" => 4.5 * scale,
+        _ => 3.0 * scale,
+    }
+}
+
+fn workload_label(workload: &str) -> String {
+    match workload {
+        "low" => "low".to_string(),
+        "medium" => "med".to_string(),
+        "high" => "high".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn workload_marker_legend(x: f64, y: f64, style: FigureStyle) -> String {
+    let mut svg = String::new();
+    let entries = [("low", 2.5), ("med", 3.5), ("high", 4.5)];
+    let scale = if style.show_header { 1.0 } else { 0.72 };
+    let box_size = legend_box_size(style);
+    for (index, (label, radius)) in entries.iter().enumerate() {
+        let row_y = y + index as f64 * legend_item_stride(style) + box_size * 0.5;
+        let cx = x + 6.0 * scale;
+        let r = radius * scale;
+        svg.push_str(&format!(
+            r#"<circle cx="{cx:.2}" cy="{row_y:.2}" r="{r:.2}" fill="{MUTED_COLOR}" fill-opacity="0.65" stroke="{INK_COLOR}" stroke-width="0.5"/>"#
+        ));
+        svg.push_str(&text(
+            x + 16.0 * scale,
+            row_y + 3.0,
+            label,
+            style.font_legend,
+            "start",
+            INK_COLOR,
+        ));
+    }
+    svg
 }
 
 fn draw_bar(
@@ -882,9 +1164,15 @@ fn draw_bar(
     ));
 }
 
-fn rect(x: f64, y: f64, width: f64, height: f64, color: &str) -> String {
+fn rect_fill(x: f64, y: f64, width: f64, height: f64, color: &str) -> String {
     format!(
         r#"<rect x="{x:.2}" y="{y:.2}" width="{width:.2}" height="{height:.2}" fill="{color}"/>"#
+    )
+}
+
+fn rect(x: f64, y: f64, width: f64, height: f64, color: &str) -> String {
+    format!(
+        r#"<rect x="{x:.2}" y="{y:.2}" width="{width:.2}" height="{height:.2}" fill="{color}" stroke="{INK_COLOR}" stroke-width="0.3" stroke-opacity="0.4"/>"#
     )
 }
 
@@ -910,12 +1198,60 @@ fn text(x: f64, y: f64, value: &str, size: u32, anchor: &str, color: &str) -> St
     output
 }
 
-fn legend(x: f64, y: f64, items: &[(&str, &str)]) -> String {
+fn legend_horizontal(x: f64, y: f64, items: &[(&str, &str)], style: FigureStyle) -> String {
     let mut svg = String::new();
+    let box_size = legend_box_size(style);
+    let mut cursor = x;
+    let row_y = y + box_size;
     for (index, (label, color)) in items.iter().enumerate() {
-        let y = y + index as f64 * 24.0;
-        svg.push_str(&rect(x, y - 12.0, 16.0, 16.0, color));
-        svg.push_str(&text(x + 24.0, y + 1.0, label, 13, "start", MUTED_COLOR));
+        if index > 0 {
+            cursor += legend_horizontal_gap(style);
+        }
+        svg.push_str(&rect(
+            cursor,
+            row_y - box_size,
+            box_size,
+            box_size,
+            color,
+        ));
+        svg.push_str(&text(
+            cursor + box_size + 3.0,
+            row_y - 1.0,
+            label,
+            style.font_legend,
+            "start",
+            INK_COLOR,
+        ));
+        cursor += legend_symbol_width(label, style);
+    }
+    svg
+}
+
+fn legend_lines(x: f64, y: f64, items: &[(&str, &str)], style: FigureStyle) -> String {
+    let mut svg = String::new();
+    let box_size = legend_box_size(style);
+    let line_len = box_size * 1.4;
+    for (index, (label, color)) in items.iter().enumerate() {
+        let row_y = y + index as f64 * legend_item_stride(style) + box_size * 0.5;
+        let dash = CDF_DASHES[index % CDF_DASHES.len()];
+        let dash_attr = if dash.is_empty() {
+            String::new()
+        } else {
+            format!(r#" stroke-dasharray="{dash}""#)
+        };
+        svg.push_str(&format!(
+            r#"<line x1="{x:.2}" y1="{row_y:.2}" x2="{:.2}" y2="{row_y:.2}" stroke="{color}" stroke-width="{:.2}"{dash_attr}/>"#,
+            x + line_len,
+            style.line_stroke
+        ));
+        svg.push_str(&text(
+            x + line_len + 4.0,
+            row_y + 3.0,
+            label,
+            style.font_legend,
+            "start",
+            INK_COLOR,
+        ));
     }
     svg
 }
@@ -945,8 +1281,18 @@ fn format_metric(value: f64) -> String {
         format!("{value:.0}")
     } else if value.abs() >= 10.0 {
         format!("{value:.1}")
+    } else if value.abs() >= 1.0 {
+        format!("{value:.2}")
     } else {
-        format!("{value:.3}")
+        format!("{value:.2}")
+    }
+}
+
+fn format_tick(value: f64, max_value: f64) -> String {
+    if max_value <= 1.05 && max_value > 0.0 {
+        format!("{value:.1}")
+    } else {
+        format_metric(value)
     }
 }
 

@@ -72,9 +72,11 @@ cargo run --release --bin export_figures -- \
   --results ../veins_qos/simulations/veins_inet_highway_light/results \
   --results ../veins_qos/simulations/veins_inet_highway_heavy/results \
   --output publication_figures \
-  --formats svg,png,pdf \
+  --formats svg,pdf \
   --dpi 300
 ```
+
+By default figures use `--ieee` (252×200 pt, Times serif, tight margins, no in-figure titles). Use `--no-ieee` and larger `--width` / `--height` for slide-style exports.
 
 Naming: `fig_{01..07}_{slug}_{highway_light|highway_heavy}.{ext}`
 
