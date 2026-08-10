@@ -43,9 +43,10 @@ The implementation deliberately uses a **two-class** model (BE vs crash VO) for 
 - SUMO via `veins_launchd`
 - Rust toolchain for `kpi_dashboard`
 
-Build the simulation:
+Build the simulation (the `inet/` and `veins/` framework trees are git submodules pinned to INET 4.5.4 and Veins 5.3.1 — initialize them first):
 
 ```bash
+git submodule update --init --recursive
 cd veins_qos
 make makefiles && make
 ```

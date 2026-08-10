@@ -131,7 +131,7 @@ sequenceDiagram
 | Issue | Severity | Detail |
 |-------|----------|--------|
 | `AI_CONTEXT.md` load profiles / sim time | High | Said 100s and old intervals; highway active uses 70s and current netload table |
-| P95/jitter scope | Medium | Parser uses `Scenario.node[0].app[0]` vectors only; scalar means aggregate all nodes |
+| P95/jitter scope | Resolved (doc error) | Parser pools vector samples from **every** node's `app[0]` (`is_node_app` in `kpi_dashboard/src/lib.rs` matches any node index); scalar means aggregate all nodes. Earlier versions of this report incorrectly said `node[0]` only |
 | `voDedupWindow` | Medium | Parameter named as window but entries never expire (run-long dedup) |
 | VO delay timestamp | Medium | Logical burst time logged but `CreationTimeTag` uses per-repeat send time |
 | Figure axis labels | Medium | Bar charts had strategy/value axes swapped in SVG labels (fixed in exporter) |
