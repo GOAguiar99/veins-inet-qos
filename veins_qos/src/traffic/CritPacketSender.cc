@@ -24,6 +24,7 @@ const simsignal_t kBeRxPacketCountSignal = cComponent::registerSignal("beRxPacke
 const simsignal_t kVoRxPacketCountSignal = cComponent::registerSignal("voRxPacketCount");
 const simsignal_t kBeE2eDelaySignal = cComponent::registerSignal("beE2eDelay");
 const simsignal_t kVoE2eDelaySignal = cComponent::registerSignal("voE2eDelay");
+const simsignal_t kBeE2eDelayFromCrashSignal = cComponent::registerSignal("beE2eDelayFromCrash");
 
 int parseCrashSequenceFromName(const char *name)
 {
@@ -52,12 +53,13 @@ int parseCrashSequenceFromName(const char *name)
 bool CritPacketSender::startApplication()
 {
     enabled      = par("enabled").boolValue();
-    sendInterval = par("sendInterval");
     payloadBytes = par("payloadBytes").intValue();
     dscp         = par("dscp").intValue();
+    crashNodeIndex = par("crashNodeIndex").intValue();
     packetName   = par("packetName").stdstringValue();
     voDedupWindow = par("voDedupWindow");
     selfAddress  = L3AddressResolver().addressOf(getParentModule(), "wlan0");
+    crashNodeAddress = resolveCrashNodeAddress();
 
     ++gen; // reset any previous chain (defensive)
 
@@ -65,17 +67,17 @@ bool CritPacketSender::startApplication()
             << " idx=" << getParentModule()->getIndex()
             << " t=" << simTime()
             << " enabled=" << enabled
-            << " sendInterval=" << sendInterval
+            << " sendInterval=" << par("sendInterval").str()
             << " payloadBytes=" << payloadBytes
             << " dscp=" << dscp
             << " voDedupWindow=" << voDedupWindow
+            << " crashNodeIndex=" << crashNodeIndex
             << " selfAddress=" << selfAddress
             << " packetName=" << packetName
             << endl;
 
-    if (enabled && sendInterval > SIMTIME_ZERO) {
-        startLoop(sendInterval);
-    }
+    if (enabled)
+        startLoop();
 
     return true;
 }
@@ -87,21 +89,56 @@ bool CritPacketSender::stopApplication()
     return true;
 }
 
-void CritPacketSender::startLoop(simtime_t interval)
+simtime_t CritPacketSender::drawSendInterval() const
 {
-    const uint64_t myGen = ++gen;
-    scheduleNext(myGen, interval);
+    return par("sendInterval");
 }
 
-void CritPacketSender::scheduleNext(uint64_t myGen, simtime_t interval)
+void CritPacketSender::startLoop()
 {
+    const uint64_t myGen = ++gen;
+    scheduleNext(myGen);
+}
+
+void CritPacketSender::scheduleNext(uint64_t myGen)
+{
+    const simtime_t interval = drawSendInterval();
+    if (interval <= SIMTIME_ZERO)
+        return;
+
     timerManager.create(
-        veins::TimerSpecification([this, myGen, interval]() {
+        veins::TimerSpecification([this, myGen]() {
             if (myGen != gen) return;
             if (enabled) sendOne();
-            scheduleNext(myGen, interval);
+            scheduleNext(myGen);
         }).oneshotIn(interval)
     );
+}
+
+inet::L3Address CritPacketSender::resolveCrashNodeAddress() const
+{
+    if (crashNodeIndex < 0)
+        return inet::L3Address();
+
+    cModule *node = getParentModule();
+    if (node == nullptr)
+        return inet::L3Address();
+    if (node->getIndex() == crashNodeIndex)
+        return selfAddress;
+
+    cModule *net = node->getParentModule();
+    if (net == nullptr)
+        return inet::L3Address();
+    cModule *crash = net->getSubmodule("node", crashNodeIndex);
+    if (crash == nullptr)
+        return inet::L3Address();
+
+    try {
+        return L3AddressResolver().addressOf(crash, "wlan0");
+    }
+    catch (const omnetpp::cRuntimeError&) {
+        return inet::L3Address();
+    }
 }
 
 void CritPacketSender::sendOne()
@@ -128,7 +165,6 @@ void CritPacketSender::sendOne()
 
 void CritPacketSender::processPacket(std::shared_ptr<Packet> pk)
 {
-    // This sender app doesn’t need RX logic, but logging is useful.
     int rxDscp = -1;
     if (const auto dscpInd = pk->findTag<DscpInd>())
         rxDscp = dscpInd->getDifferentiatedServicesCodePoint();
@@ -172,7 +208,13 @@ void CritPacketSender::processPacket(std::shared_ptr<Packet> pk)
 
     if (rxDscp == kDscpBe) {
         emit(kBeRxPacketCountSignal, 1L);
-        if (hasCreationTime) emit(kBeE2eDelaySignal, delay);
+        if (hasCreationTime) {
+            emit(kBeE2eDelaySignal, delay);
+            if (crashNodeAddress.isUnspecified())
+                crashNodeAddress = resolveCrashNodeAddress();
+            if (!crashNodeAddress.isUnspecified() && src == crashNodeAddress)
+                emit(kBeE2eDelayFromCrashSignal, delay);
+        }
     }
     else if (rxDscp == kDscpVo) {
         if (voDedupWindow > SIMTIME_ZERO && seq >= 0 && !src.isUnspecified()) {

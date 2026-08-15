@@ -174,7 +174,8 @@ void CrashBurstApp::sendOne(int sequenceNumber, int repeatIndex, simtime_t logic
     auto payload = makeShared<ByteCountChunk>(B(payloadBytes));
     payload->removeTagIfPresent<CreationTimeTag>(b(0), b(-1));
     auto creationTimeTag = payload->addTag<CreationTimeTag>();
-    creationTimeTag->setCreationTime(simTime());
+    // Stamp the logical burst time so e2e delay is alert age, not per-repeat MAC delay.
+    creationTimeTag->setCreationTime(logicalCreationTime);
     pk->insertAtBack(payload);
 
     EV_INFO << "TX " << pk->getName()

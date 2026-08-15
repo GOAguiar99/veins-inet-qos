@@ -13,25 +13,28 @@ namespace veins_qos::traffic {
 
 /**
  * Periodic packet generator.
- * - Sends one packet every sendInterval (if enabled)
+ * - Sends one packet after each sendInterval draw (if enabled)
  * - Adds DscpReq tag (dscp param)
  * - Appends dummy payload with payloadBytes
+ *
+ * sendInterval is volatile: each packet draws a new value so
+ * exponential(mean) in omnetpp.ini is a Poisson process, not a
+ * per-node CBR period frozen at initialize.
  *
  * This module does NOT implement any crash logic. It just sends.
  */
 class CritPacketSender : public veins::VeinsInetApplicationBase
 {
   protected:
-    // params
     bool enabled = true;
-    simtime_t sendInterval = SIMTIME_ZERO;
     int payloadBytes = 0;
     int dscp = 0;
+    int crashNodeIndex = 0;
     std::string packetName;
     inet::L3Address selfAddress;
+    inet::L3Address crashNodeAddress;
     simtime_t voDedupWindow = SIMTIME_ZERO;
 
-    // state
     uint64_t gen = 0; // cancels old timer chain when stopping
     std::map<std::pair<std::string, int>, simtime_t> voDedupSeen;
 
@@ -39,8 +42,10 @@ class CritPacketSender : public veins::VeinsInetApplicationBase
     bool startApplication() override;
     bool stopApplication() override;
 
-    void startLoop(simtime_t interval);
-    void scheduleNext(uint64_t myGen, simtime_t interval);
+    void startLoop();
+    void scheduleNext(uint64_t myGen);
+    omnetpp::simtime_t drawSendInterval() const;
+    inet::L3Address resolveCrashNodeAddress() const;
 
     void sendOne();
 

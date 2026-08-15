@@ -12,29 +12,33 @@ simple CritPacketSender extends VeinsInetApplicationBase
         @signal[voRxPacketCount](type=long);
         @signal[beE2eDelay](type=simtime_t);
         @signal[voE2eDelay](type=simtime_t);
+        @signal[beE2eDelayFromCrash](type=simtime_t);
 
         @statistic[beTxPackets](title="BE transmitted packets"; source=beTxPacketCount; record=count; interpolationmode=none);
         @statistic[beRxPackets](title="BE received packets"; source=beRxPacketCount; record=count; interpolationmode=none);
         @statistic[voRxPackets](title="VO received packets"; source=voRxPacketCount; record=count; interpolationmode=none);
         @statistic[beEndToEndDelay](title="BE end-to-end delay"; unit=s; source=beE2eDelay; record=vector,count,mean,min,max);
         @statistic[voEndToEndDelay](title="VO end-to-end delay"; unit=s; source=voE2eDelay; record=vector,count,mean,min,max);
+        @statistic[beEndToEndDelayFromCrash](title="BE end-to-end delay from crash node"; unit=s; source=beE2eDelayFromCrash; record=vector,count,mean,min,max);
 
         bool enabled = default(true);
 
-        // periodic sending
-        double sendInterval @unit(s) = default(0.1s);
+        // Redrawn on every packet. Marked volatile so ini exponential(mean)
+        // is a Poisson process rather than one CBR period per vehicle.
+        volatile double sendInterval @unit(s) = default(0.1s);
 
-        // payload sizing
         int payloadBytes = default(200);
 
-        // QoS marking (your classifier will map DSCP->UP)
         int dscp = default(0);                 // 0=BE, 46=EF(VO)
 
-        // packet naming (helps debugging)
         string packetName = default("tx");
-        // Positive values enable run-long VO repeat deduplication.
-        // Kept as a time parameter for legacy configs; entries are not expired mid-run.
+        // Positive: keep only the first RX copy of each (src, VO sequence)
+        // for the whole run (crash usefulness). The numeric value is a
+        // legacy on/off threshold, not a sliding expiry window.
         double voDedupWindow @unit(s) = default(200ms);
+
+        // Node index of CrashBurstApp; used to split BE delay from that sender.
+        int crashNodeIndex = default(0);
 
         @display("i=block/app");
     gates:

@@ -19,6 +19,7 @@ simple CrashBurstApp extends VeinsInetApplicationBase
         double resumeAfter @unit(s) = default(30s);
 
         // VO traffic during crash window (DSCP=46)
+        // VO traffic during crash window (DSCP=46). Burst period is fixed (not Poisson).
         double sendInterval @unit(s) = default(100ms);
         int payloadBytes = default(200);
         int repeatCount = default(3);
