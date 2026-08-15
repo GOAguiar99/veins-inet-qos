@@ -442,7 +442,7 @@ pub fn build_dashboard_response(
     }
 }
 
-fn try_load_valid_rust_cache(results_dir: &Path) -> Result<Option<DashboardDataset>> {
+pub fn try_load_valid_rust_cache(results_dir: &Path) -> Result<Option<DashboardDataset>> {
     let meta_path = rust_cache_dir(results_dir).join("meta.json");
     let run_rows_path = rust_cache_dir(results_dir).join("run_rows.json");
     let config_summary_path = rust_cache_dir(results_dir).join("config_summary.json");

@@ -6,7 +6,10 @@ use std::process::Command;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use kpi_dashboard::{default_results_dir, rebuild_raw_dataset, ConfigSummary, DashboardDataset};
+use kpi_dashboard::{
+    default_results_dir, rebuild_raw_dataset, try_load_valid_rust_cache, ConfigSummary,
+    DashboardDataset,
+};
 
 const STRATEGIES: &[&str] = &["plain", "edca_only", "stable", "guarded", "emergency"];
 const WORKLOADS: &[&str] = &["low", "medium", "high"];
@@ -219,9 +222,15 @@ fn main() -> Result<()> {
     for results_dir in results_dirs {
         let density = density_label(&results_dir);
         let dataset = if need_dataset {
-            Some(rebuild_raw_dataset(&results_dir, args.threads).with_context(|| {
-                format!("failed to rebuild KPI data from {}", results_dir.display())
-            })?)
+            match try_load_valid_rust_cache(&results_dir)? {
+                Some(cached) => {
+                    eprintln!("using KPI cache for {}", results_dir.display());
+                    Some(cached)
+                }
+                None => Some(rebuild_raw_dataset(&results_dir, args.threads).with_context(
+                    || format!("failed to rebuild KPI data from {}", results_dir.display()),
+                )?),
+            }
         } else {
             None
         };
