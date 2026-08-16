@@ -16,7 +16,6 @@ Define_Module(V2xHcf);
 V2xHcf::~V2xHcf()
 {
     cancelAndDelete(beRetryTimer);
-    cancelAndDelete(predictTimer);
 }
 
 void V2xHcf::initialize(int stage)
@@ -32,20 +31,11 @@ void V2xHcf::initialize(int stage)
         if (maxContinuousBlock > SIMTIME_ZERO && blockDuration > maxContinuousBlock)
             blockDuration = maxContinuousBlock;
 
-        predictiveBlocking = par("predictiveBlocking").boolValue();
-        predictiveLead = par("predictiveLead");
-        predictiveWindow = par("predictiveWindow");
-        predictiveMinGap = par("predictiveMinGap");
-        predictiveMinPeriod = par("predictiveMinPeriod");
-        predictiveMaxPeriod = par("predictiveMaxPeriod");
-
         fsmController = check_and_cast<V2xEdcaFsmController *>(getSubmodule("FSMController"));
         beRetryTimer = new cMessage("beRetryTimer");
-        predictTimer = new cMessage("v2xPredictTimer");
         beDroppedWhileBlockedSignal = registerSignal("beDroppedWhileBlocked");
         beGrantSuppressedWhileBlockedSignal = registerSignal("beGrantSuppressedWhileBlocked");
         voProtectionActivationSignal = registerSignal("voProtectionActivation");
-        voPredictiveBlockSignal = registerSignal("voPredictiveBlock");
 
         EV_INFO << "V2xHcf init"
                 << " adaptiveBlocking=" << adaptiveBlocking
@@ -53,9 +43,6 @@ void V2xHcf::initialize(int stage)
                 << " blockDuration=" << blockDuration
                 << " maxContinuousBlock=" << maxContinuousBlock
                 << " voQueueThreshold=" << voQueueThreshold
-                << " predictiveBlocking=" << predictiveBlocking
-                << " predictiveLead=" << predictiveLead
-                << " predictiveWindow=" << predictiveWindow
                 << endl;
     }
 }
@@ -66,7 +53,6 @@ void V2xHcf::finish()
     recordScalar("beDroppedWhileBlockedCount", beDroppedWhileBlockedCount);
     recordScalar("beGrantSuppressedWhileBlockedCount", beGrantSuppressedWhileBlockedCount);
     recordScalar("voProtectionActivationCount", voProtectionActivationCount);
-    recordScalar("voPredictiveBlockCount", voPredictiveBlockCount);
 }
 
 AccessCategory V2xHcf::classifyAccessCategory(const Ptr<const Ieee80211DataOrMgmtHeader>& header) const
@@ -174,11 +160,6 @@ void V2xHcf::scheduleBeRetry()
 
 void V2xHcf::handleMessage(cMessage *msg)
 {
-    if (msg == predictTimer) {
-        onPredictTimer();
-        return;
-    }
-
     if (msg == beRetryTimer) {
         if (adaptiveBlocking && fsmController != nullptr && fsmController->isBeBlocked()) {
             scheduleBeRetry();
@@ -287,104 +268,9 @@ void V2xHcf::processLowerFrame(Packet *packet, const Ptr<const Ieee80211MacHeade
         activateVoProtection(blockDuration);
         if (hasBeQueuePressure())
             scheduleBeRetry();
-
-        if (predictiveBlocking) {
-            if (const auto dataHeader = dynamicPtrCast<const Ieee80211DataHeader>(header))
-                feedVoPredictor(dataHeader->getTransmitterAddress(), simTime());
-        }
     }
 
     Hcf::processLowerFrame(packet, header);
-}
-
-void V2xHcf::feedVoPredictor(const inet::MacAddress& source, omnetpp::simtime_t now)
-{
-    if (source.isUnspecified() || source.isBroadcast() || source.isMulticast())
-        return;
-
-    auto& track = voPredictorTracks[source];
-
-    // Burst-start detection: a frame opens a new burst when it follows a
-    // silence longer than the intra-burst copy gaps we expect.
-    bool isNewBurst = true;
-    if (track.lastFrameAt >= SIMTIME_ZERO) {
-        if (track.period >= SIMTIME_ZERO)
-            isNewBurst = (now - track.lastBurstAt) >= track.period / 2;
-        else
-            isNewBurst = (now - track.lastFrameAt) >= predictiveMinGap;
-    }
-    track.lastFrameAt = now;
-
-    if (!isNewBurst)
-        return;
-
-    if (track.lastBurstAt >= SIMTIME_ZERO) {
-        const simtime_t measured = now - track.lastBurstAt;
-        if (measured >= predictiveMinPeriod && measured <= predictiveMaxPeriod) {
-            track.period = (track.period < SIMTIME_ZERO) ? measured : (track.period + measured) / 2;
-        }
-    }
-    track.lastBurstAt = now;
-
-    if (track.period >= SIMTIME_ZERO && predictiveLead < track.period) {
-        track.preBlockAt = now + track.period - predictiveLead;
-        refreshPredictTimer();
-    }
-}
-
-void V2xHcf::onPredictTimer()
-{
-    const simtime_t now = simTime();
-
-    for (auto& entry : voPredictorTracks) {
-        auto& track = entry.second;
-        if (track.preBlockAt < SIMTIME_ZERO || track.preBlockAt > now || track.period < SIMTIME_ZERO)
-            continue;
-
-        // Stop predicting when the source fell silent (crash window ended).
-        if (now - track.lastFrameAt > 3 * track.period + predictiveWindow) {
-            track.preBlockAt = -1;
-            track.period = -1;
-            continue;
-        }
-
-        ++voPredictiveBlockCount;
-        emit(voPredictiveBlockSignal, 1L);
-        activateVoProtection(predictiveWindow);
-
-        EV_DETAIL << "Predictive pre-block for VO burst from " << entry.first
-                  << " period=" << track.period
-                  << " window=" << predictiveWindow
-                  << " t=" << now
-                  << endl;
-
-        // Advance to the first future pre-block slot for this source.
-        do {
-            track.preBlockAt += track.period;
-        } while (track.preBlockAt <= now);
-    }
-
-    refreshPredictTimer();
-}
-
-void V2xHcf::refreshPredictTimer()
-{
-    simtime_t next = -1;
-    for (const auto& entry : voPredictorTracks) {
-        const auto& track = entry.second;
-        if (track.preBlockAt >= SIMTIME_ZERO && (next < SIMTIME_ZERO || track.preBlockAt < next))
-            next = track.preBlockAt;
-    }
-
-    if (next >= SIMTIME_ZERO) {
-        if (predictTimer->isScheduled())
-            rescheduleAt(next, predictTimer);
-        else
-            scheduleAt(next, predictTimer);
-    }
-    else if (predictTimer->isScheduled()) {
-        cancelEvent(predictTimer);
-    }
 }
 
 } // namespace veins_qos::mac
