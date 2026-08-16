@@ -44,8 +44,8 @@ omnetpp/
 ap_servers/
 
 # OMNeT++ results/logs
-results/
-**/results/
+results*/
+**/results*/
 *.vci
 *.sca
 *.vec
