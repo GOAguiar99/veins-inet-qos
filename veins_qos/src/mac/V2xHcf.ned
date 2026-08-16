@@ -27,18 +27,6 @@ module V2xHcf like IHcf
         double maxContinuousBlock @unit(s) = default(250ms); // Cap for one continuous alert window; <=0 means uncapped.
         int voQueueThreshold = default(1); // Local VO queue threshold that triggers alert from upper traffic.
 
-        // Predictive periodic protection: learn the crash burst cadence per VO
-        // source and block BE in a window BEFORE the next predicted burst, so
-        // the burst's first copy does not need to be decoded first. Only
-        // engages when bursts are separated by silent gaps (see thresholds);
-        // overlapping burst trains already keep reactive blocking active.
-        bool predictiveBlocking = default(false);
-        double predictiveLead @unit(s) = default(2ms);     // block starts this long before the predicted burst
-        double predictiveWindow @unit(s) = default(25ms);  // block length covering the predicted burst start
-        double predictiveMinGap @unit(s) = default(40ms);  // RX silence after which a frame opens a new burst (must exceed intra-burst copy gaps)
-        double predictiveMinPeriod @unit(s) = default(40ms);  // accepted burst period range
-        double predictiveMaxPeriod @unit(s) = default(2s);
-
         string rxModule;
         string txModule;
 
@@ -62,7 +50,6 @@ module V2xHcf like IHcf
         @signal[beDroppedWhileBlocked](type=long);
         @signal[beGrantSuppressedWhileBlocked](type=long);
         @signal[voProtectionActivation](type=long);
-        @signal[voPredictiveBlock](type=long);
         @statistic[packetSentToPeer](title="packets sent"; record=count,sum(packetBytes),vector(packetBytes); interpolationmode=none);
         @statistic[packetSentToPeerUnicast](title="packets sent: unicast"; source=ieee80211Unicast(packetSentToPeer); record=count,sum(packetBytes),vector(packetBytes); interpolationmode=none);
         @statistic[packetSentToPeerMulticast](title="packets sent: multicast"; source=ieee80211Multicast(packetSentToPeer); record=count,sum(packetBytes),vector(packetBytes); interpolationmode=none);
@@ -92,7 +79,6 @@ module V2xHcf like IHcf
         @statistic[beDroppedWhileBlocked](title="BE packets dropped by emergency preemption"; record=count; interpolationmode=none);
         @statistic[beGrantSuppressedWhileBlocked](title="BE channel grants suppressed by emergency preemption"; record=count; interpolationmode=none);
         @statistic[voProtectionActivation](title="VO protection activations"; record=count; interpolationmode=none);
-        @statistic[voPredictiveBlock](title="VO predictive pre-blocks"; record=count; interpolationmode=none);
 
     submodules:
         edca: Edca {

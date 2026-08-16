@@ -34,8 +34,6 @@ Same structure as highway light; only SUMO density changes (100 vehicles).
 
 Runnable config names: `*_netload_{low,medium,high}` for plain, edca_only, stable, guarded, emergency.
 
-A/B experiments: `*_multivo_high` runs 4 crash sources (nodes 0/25/50/75); `*_multivo_burstgap` uses sparse bursts under saturated BE and the `_pb` variants add predictive (pre-burst) BE blocking.
-
 ## Simulation Parameters
 
 | Parameter | Value |
