@@ -67,7 +67,7 @@ bool CritPacketSender::startApplication()
             << " idx=" << getParentModule()->getIndex()
             << " t=" << simTime()
             << " enabled=" << enabled
-            << " sendInterval=" << par("sendInterval").str()
+            << " sendInterval=volatile(ini, redrawn per packet)"
             << " payloadBytes=" << payloadBytes
             << " dscp=" << dscp
             << " voDedupWindow=" << voDedupWindow
@@ -210,7 +210,7 @@ void CritPacketSender::processPacket(std::shared_ptr<Packet> pk)
         emit(kBeRxPacketCountSignal, 1L);
         if (hasCreationTime) {
             emit(kBeE2eDelaySignal, delay);
-            if (crashNodeAddress.isUnspecified())
+            if (crashNodeIndex >= 0 && crashNodeAddress.isUnspecified())
                 crashNodeAddress = resolveCrashNodeAddress();
             if (!crashNodeAddress.isUnspecified() && src == crashNodeAddress)
                 emit(kBeE2eDelayFromCrashSignal, delay);

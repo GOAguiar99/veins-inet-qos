@@ -37,7 +37,9 @@ simple CritPacketSender extends VeinsInetApplicationBase
         // legacy on/off threshold, not a sliding expiry window.
         double voDedupWindow @unit(s) = default(200ms);
 
-        // Node index of CrashBurstApp; used to split BE delay from that sender.
+        // Node index of the crash sender; used to split BE delay from that
+        // sender. Must match CrashBurstApp.targetNodeIndex (both default 0;
+        // there is no automatic coupling, change them together).
         int crashNodeIndex = default(0);
 
         @display("i=block/app");
