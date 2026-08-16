@@ -12,13 +12,14 @@ simple CrashBurstApp extends VeinsInetApplicationBase
         @statistic[voTxPackets](title="VO transmitted packets"; source=voTxPacketCount; record=count; interpolationmode=none);
         @statistic[voLogicalTxPackets](title="VO logical crash sequences"; source=voLogicalTxPacketCount; record=count; interpolationmode=none);
 
-        // only this OMNeT++ node index triggers crash behavior; -1 means all nodes
+        // only this OMNeT++ node index triggers crash behavior; -1 means all nodes.
+        // Must match CritPacketSender.crashNodeIndex for the BE-from-crash split.
         int targetNodeIndex = default(0);
         // crash timing (absolute simulation time)
         double crashAt @unit(s) = default(20s);
         double resumeAfter @unit(s) = default(30s);
 
-        // VO traffic during crash window (DSCP=46)
+        // VO traffic during crash window (DSCP=46). Burst period is fixed (not Poisson).
         double sendInterval @unit(s) = default(100ms);
         int payloadBytes = default(200);
         int repeatCount = default(3);

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const CACHE_SCHEMA_VERSION: u32 = 3;
-const PARSER_VERSION: &str = "rust-kpi-dashboard-0.2.0";
+const PARSER_VERSION: &str = "rust-kpi-dashboard-0.2.1";
 const CACHE_DIR_NAME: &str = ".kpi_cache_rs";
 const AC_INDEX_BE: u8 = 1;
 const AC_INDEX_VO: u8 = 3;
@@ -18,6 +18,7 @@ const AC_INDEX_VO: u8 = 3;
 macro_rules! define_metrics {
     ($($field:ident),+ $(,)?) => {
         #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+        #[serde(default)]
         pub struct NumericMetrics {
             $(pub $field: Option<f64>,)+
         }
@@ -61,6 +62,8 @@ define_metrics!(
     vo_delay_max_ms,
     vo_delay_p95_ms,
     vo_jitter_ms,
+    be_delay_from_crash_ms,
+    be_delay_from_crash_p95_ms,
     be_tx_count,
     be_rx_count,
     vo_tx_count,
@@ -257,10 +260,12 @@ struct VecMetrics {
     be_jitter_s: Option<f64>,
     vo_delay_p95_s: Option<f64>,
     vo_jitter_s: Option<f64>,
+    be_from_crash_delay_p95_s: Option<f64>,
     be_headers: usize,
     vo_headers: usize,
     be_samples: usize,
     vo_samples: usize,
+    be_from_crash_samples: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -550,6 +555,7 @@ fn parse_vec_metrics(path: &Path) -> Result<VecMetrics> {
     enum DelayMetric {
         Be,
         Vo,
+        BeFromCrash,
     }
 
     let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
@@ -558,6 +564,7 @@ fn parse_vec_metrics(path: &Path) -> Result<VecMetrics> {
     let mut last_value_by_vector_id: HashMap<String, f64> = HashMap::new();
     let mut be_values = Vec::new();
     let mut vo_values = Vec::new();
+    let mut be_from_crash_values = Vec::new();
     let mut be_jitter_sum = 0.0;
     let mut vo_jitter_sum = 0.0;
     let mut be_jitter_count = 0usize;
@@ -587,6 +594,8 @@ fn parse_vec_metrics(path: &Path) -> Result<VecMetrics> {
             } else if is_node_app(module, 0) && metric == "voEndToEndDelay:vector" {
                 metric_by_vector_id.insert(vector_id.to_string(), DelayMetric::Vo);
                 metrics.vo_headers += 1;
+            } else if is_node_app(module, 0) && metric == "beEndToEndDelayFromCrash:vector" {
+                metric_by_vector_id.insert(vector_id.to_string(), DelayMetric::BeFromCrash);
             }
             continue;
         }
@@ -613,6 +622,7 @@ fn parse_vec_metrics(path: &Path) -> Result<VecMetrics> {
                     vo_jitter_sum += (value - previous).abs();
                     vo_jitter_count += 1;
                 }
+                DelayMetric::BeFromCrash => {}
             }
         }
 
@@ -625,11 +635,16 @@ fn parse_vec_metrics(path: &Path) -> Result<VecMetrics> {
                 metrics.vo_samples += 1;
                 vo_values.push(value);
             }
+            DelayMetric::BeFromCrash => {
+                metrics.be_from_crash_samples += 1;
+                be_from_crash_values.push(value);
+            }
         }
     }
 
     metrics.be_delay_p95_s = percentile(&mut be_values, 0.95);
     metrics.vo_delay_p95_s = percentile(&mut vo_values, 0.95);
+    metrics.be_from_crash_delay_p95_s = percentile(&mut be_from_crash_values, 0.95);
     metrics.be_jitter_s = (be_jitter_count > 0).then_some(be_jitter_sum / be_jitter_count as f64);
     metrics.vo_jitter_s = (vo_jitter_count > 0).then_some(vo_jitter_sum / vo_jitter_count as f64);
     Ok(metrics)
@@ -655,6 +670,8 @@ fn parse_sca_file(path: &Path, vec_metrics: &VecMetrics) -> Result<RunRow> {
     let mut vo_delay_mean_by_module: HashMap<String, f64> = HashMap::new();
     let mut vo_delay_min_values = Vec::new();
     let mut vo_delay_max_values = Vec::new();
+    let mut be_from_crash_delay_count_by_module: HashMap<String, f64> = HashMap::new();
+    let mut be_from_crash_delay_mean_by_module: HashMap<String, f64> = HashMap::new();
 
     let mut mac_drop_total = 0.0;
     let mut mac_drop_queue_overflow_total = 0.0;
@@ -750,6 +767,12 @@ fn parse_sca_file(path: &Path, vec_metrics: &VecMetrics) -> Result<RunRow> {
                 }
                 "voEndToEndDelay:min" => vo_delay_min_values.push(value),
                 "voEndToEndDelay:max" => vo_delay_max_values.push(value),
+                "beEndToEndDelayFromCrash:count" => {
+                    be_from_crash_delay_count_by_module.insert(module.to_string(), value);
+                }
+                "beEndToEndDelayFromCrash:mean" => {
+                    be_from_crash_delay_mean_by_module.insert(module.to_string(), value);
+                }
                 _ => {}
             }
         } else if is_node_app(module, 1) {
@@ -868,6 +891,10 @@ fn parse_sca_file(path: &Path, vec_metrics: &VecMetrics) -> Result<RunRow> {
 
     let be_delay_s = weighted_mean(&be_delay_count_by_module, &be_delay_mean_by_module);
     let vo_delay_s = weighted_mean(&vo_delay_count_by_module, &vo_delay_mean_by_module);
+    let be_from_crash_delay_s = weighted_mean(
+        &be_from_crash_delay_count_by_module,
+        &be_from_crash_delay_mean_by_module,
+    );
 
     let mac_drop_be_fallback = mac_drop_be_queue_overflow_total + mac_drop_be_retry_limit_total;
     let mac_drop_vo_fallback = mac_drop_vo_queue_overflow_total + mac_drop_vo_retry_limit_total;
@@ -1001,6 +1028,8 @@ fn parse_sca_file(path: &Path, vec_metrics: &VecMetrics) -> Result<RunRow> {
             vo_delay_max_ms: finite_max(&vo_delay_max_values).map(seconds_to_ms),
             vo_delay_p95_ms: vec_metrics.vo_delay_p95_s.map(seconds_to_ms),
             vo_jitter_ms: vec_metrics.vo_jitter_s.map(seconds_to_ms),
+            be_delay_from_crash_ms: be_from_crash_delay_s.map(seconds_to_ms),
+            be_delay_from_crash_p95_ms: vec_metrics.be_from_crash_delay_p95_s.map(seconds_to_ms),
             be_tx_count: Some(be_tx_total.round()),
             be_rx_count: Some(be_rx_total.round()),
             vo_tx_count: Some(vo_tx_total.round()),
@@ -1287,6 +1316,8 @@ fn build_v2x_variant_matrix(
         ),
         ("BE", "P95 delay (ms)", "be_delay_p95_ms"),
         ("BE", "Mean delay (ms)", "be_delay_ms"),
+        ("BE", "P95 delay from crash node (ms)", "be_delay_from_crash_p95_ms"),
+        ("BE", "Mean delay from crash node (ms)", "be_delay_from_crash_ms"),
         ("BE", "Jitter (ms)", "be_jitter_ms"),
         ("BE", "RX / TX", "be_rx_per_tx"),
         ("BE", "Incorrect RX drops", "mac_drop_be_incorrect_rx_count"),
@@ -2092,6 +2123,8 @@ fn label_for(id: &str) -> &'static str {
         "be_delay_max_ms" => "BE Max Delay (ms)",
         "be_delay_p95_ms" => "BE P95 Delay (ms)",
         "be_jitter_ms" => "BE Jitter (ms)",
+        "be_delay_from_crash_ms" => "BE Mean Delay from Crash Node (ms)",
+        "be_delay_from_crash_p95_ms" => "BE P95 Delay from Crash Node (ms)",
         "be_rx_per_tx" => "BE RX per TX",
         "be_tx_count" => "BE TX",
         "be_rx_count" => "BE RX",
@@ -2568,6 +2601,26 @@ vector 2 Scenario.node[0].app[0] voEndToEndDelay:vector ETV
         assert!((metrics.be_delay_p95_s.unwrap() - 0.0048).abs() < 1e-12);
         assert!((metrics.be_jitter_s.unwrap() - 0.002).abs() < 1e-12);
         assert!((metrics.vo_jitter_s.unwrap() - 0.004).abs() < 1e-12);
+    }
+
+    #[test]
+    fn parses_be_delay_from_crash_vector() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("crash_be.vec");
+        fs::write(
+            &path,
+            "\
+vector 3 Scenario.node[1].app[0] beEndToEndDelayFromCrash:vector ETV
+3 1 0.1 0.001
+3 2 0.2 0.002
+3 3 0.3 0.004
+",
+        )
+        .unwrap();
+
+        let metrics = parse_vec_metrics(&path).unwrap();
+        assert_eq!(metrics.be_from_crash_samples, 3);
+        assert!((metrics.be_from_crash_delay_p95_s.unwrap() - 0.0038).abs() < 1e-12);
     }
 
     #[test]

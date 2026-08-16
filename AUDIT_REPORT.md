@@ -132,8 +132,9 @@ sequenceDiagram
 |-------|----------|--------|
 | `AI_CONTEXT.md` load profiles / sim time | High | Said 100s and old intervals; highway active uses 70s and current netload table |
 | P95/jitter scope | Medium | Parser uses `Scenario.node[0].app[0]` vectors only; scalar means aggregate all nodes |
-| `voDedupWindow` | Medium | Parameter named as window but entries never expire (run-long dedup) |
-| VO delay timestamp | Medium | Logical burst time logged but `CreationTimeTag` uses per-repeat send time |
+| `voDedupWindow` | Medium | Name looks like a sliding window; code keeps first copy of each `(src, seq)` for the whole run (on/off via `> 0`). Documented in NED; expiry not used because crash usefulness is first copy of a logical sequence. |
+| VO delay timestamp | Medium | **Fixed:** `CrashBurstApp` now stamps `logicalCreationTime` on `CreationTimeTag`. |
+| BE `exponential(mean)` frozen per node | High | **Fixed:** `sendInterval` is `volatile` and redrawn on every packet. |
 | Figure axis labels | Medium | Bar charts had strategy/value axes swapped in SVG labels (fixed in exporter) |
 | Dynamic `fig_XX` numbering | Low | Skipped figures shifted indices (fixed) |
 | `SCIENTIFIC_DASHBOARD.md` UI sections | Low | Describes 7 dashboard sections; UI has 4 tables only |

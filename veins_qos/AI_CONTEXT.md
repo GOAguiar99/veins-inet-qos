@@ -103,7 +103,7 @@ This separation is deliberate so traffic density and channel load can be stresse
 In the active highway `omnetpp.ini` (`veins_inet_highway_light` / `veins_inet_highway_heavy`):
 - simulation time is `70s`
 - crash traffic starts at `30s` and lasts `30s` (`resumeAfter`)
-- default medium-like app parameters in `[General]`: BE `exponential(250ms)`, `320` B; VO `75ms`, `180` B, `repeatCount=4`
+- default medium-like app parameters in `[General]`: BE `exponential(250ms)` **per packet** (`sendInterval` is `volatile` in `CritPacketSender`), `320` B; VO `75ms`, `180` B, `repeatCount=4`. Voice `CreationTimeTag` is the logical burst time, not the per-repeat send time.
 - load overlays `_netload_*` override application rates (see scenario READMEs)
 
 The applications communicate via UDP multicast to `224.0.0.1` on `wlan0`.
