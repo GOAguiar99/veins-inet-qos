@@ -24,6 +24,7 @@ Protection extends on:
 
 1. **Local VO demand** — upper-layer VO enqueued (`onVoDemandDetected`)
 2. **Overheard VO** — received VO-classified data frames (multicast-aware; not limited to unicast-to-self)
+3. **Predicted VO bursts** — `predictiveBlocking` pre-blocks BE just before the next expected burst per source cadence (useful when bursts are sparse; corrupted/undecoded first copies can't trigger reactive protection)
 
 ## Mode Comparison (active configs)
 
@@ -40,6 +41,10 @@ Protection extends on:
 - `sendingGuardTimeout` — grace after VO TX transitions (FSM submodule)
 - `voQueueThreshold` — local VO queue depth to trigger alert
 - `emergencyPreemption` — drop new BE and suppress stale BE grants while blocking
+- `predictiveBlocking` — learn burst cadence per overheard VO source and block BE `predictiveLead` before each predicted burst (window `predictiveWindow`)
+- `predictiveMinGap` / `predictiveMinPeriod` / `predictiveMaxPeriod` — burst-start detection and accepted period range; prediction only engages when bursts are separated by silent gaps (overlapping burst trains keep reactive blocking active anyway)
+
+Predictive activations are counted as `voPredictiveBlockCount` (in addition to `voProtectionActivationCount`, which they also increment).
 
 ## MAC Drop Scalars (`V2xIeee80211Mac`)
 
