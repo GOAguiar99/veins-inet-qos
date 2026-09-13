@@ -71,6 +71,9 @@ The figure exporter accepts **multiple** `--results` paths in one command.
 cargo run --release --bin export_figures -- \
   --results ../veins_qos/simulations/veins_inet_highway_light/results \
   --results ../veins_qos/simulations/veins_inet_highway_heavy/results \
+  --summary-json ../../Masters/context/eval-kpis/highway_heavy_hotspot/config_summary.json \
+  --summary-json ../../Masters/context/eval-kpis/highway_heavy/config_summary.json \
+  --summary-json ../../Masters/context/eval-kpis/highway_light/config_summary.json \
   --output publication_figures \
   --formats svg,pdf \
   --dpi 300
@@ -88,13 +91,13 @@ cargo run --release --bin export_figures -- \
   --formats svg,pdf
 ```
 
-`--figures` accepts numeric ids (`06`), `fig_06`, or slugs (`vo_delay_cdf_high_load`). Repeat the flag for multiple figures. Omit it to export all figures that have data.
+`--figures` accepts numeric ids (`06`), `fig_06`, or slugs (`vo_delay_cdf_high_load`). Repeat the flag for multiple figures. Omit it to export the **default thesis set** (audit heatmaps 02/03 excluded).
 
-Fig. 06 only reads **high-load VO** `.vec` files (not all 45 runs), subsamples per run, and prints progress on stderr. PDFs are written via `rsvg-convert -f pdf1.4` (tight SVG canvas, no extra crop flags).
+Fig. 06 only reads **high-load VO** `.vec` files (not all 45 runs), subsamples per run, and prints progress on stderr. Under defaults, fig. 06 is skipped for light density. PDFs are written via `rsvg-convert -f pdf1.4` (tight SVG canvas, no extra crop flags).
 
 By default figures use the **publication** preset (720×480 px, readable fonts, legend in a dedicated footer band below the plot). Pass `--ieee` for the compact 252 px single-column layout. Use `--no-ieee` explicitly or omit `--ieee` for publication exports.
 
-Naming: `fig_{01..07}_{slug}_{highway_light|highway_heavy}.{ext}`
+Naming: density-specific `fig_{01,05,06,07}_{slug}_{highway_light|highway_heavy}.{ext}`; cross-regime `fig_{04,08,09,10}_{slug}_highway_heavy.{ext}`.
 
 See [`SCIENTIFIC_DASHBOARD.md`](SCIENTIFIC_DASHBOARD.md) for figure rationale.
 
@@ -108,7 +111,7 @@ See [`SCIENTIFIC_DASHBOARD.md`](SCIENTIFIC_DASHBOARD.md) for figure rationale.
 
 Cache invalidates when parser version, schema, or source file name/size/mtime changes.
 
-**Note:** `export_figures` always re-parses raw files (and refreshes cache); it does not skip parsing for speed.
+**Note:** `export_figures` uses a valid `.kpi_cache_rs` when present; otherwise it rebuilds from raw `.sca`/`.vec` and refreshes the cache. Pass `--summary-json` to merge archived `config_summary.json` rows (needed for hotspot cross-regime figures without local `.sca`).
 
 Before analyzing a new experiment batch, clear or archive incompatible `results/` (see top-level [`README.md`](../README.md)).
 
@@ -131,15 +134,18 @@ Missing data → JSON `null` / UI `N/A` (no fabrication).
 
 | ID | Slug | Content |
 |----|------|---------|
-| 01 | `p95_delay_priority_gap` | BE vs VO P95 at high load |
-| 02 | `mac_drop_rate_by_strategy_load` | Drop rate heatmap |
-| 03 | `vo_reception_by_strategy_load` | VO RX per logical TX heatmap |
-| 04 | `latency_jitter_tradeoff` | Mean delay vs jitter scatter |
-| 05 | `mac_drop_attribution_high_load` | BE/VO/unclassified drops |
+| 01 | `p95_delay_priority_gap` | Dual-panel VO/BE P95 at netload high |
+| 02 | `mac_drop_rate_by_strategy_load` | Drop rate heatmap **[audit]** |
+| 03 | `vo_reception_by_strategy_load` | VO RX per logical TX heatmap **[audit]** |
+| 04 | `vo_gain_vs_be_cost` | Dual-panel Δ VO P95 vs Δ BE P95 (netload | hotspot) |
+| 05 | `mac_drop_attribution_high_load` | BE/VO/Other stacked drops |
 | 06 | `vo_delay_cdf_high_load` | Empirical VO delay CDF |
-| 07 | `v2x_control_actions_by_load` | V2X control counters (high load; dual-panel VO prot. / BE supp.) |
+| 07 | `v2x_control_actions_by_load` | Load-sweep VO protection + BE blocked counters |
+| 08 | `hotspot_vo_delay_by_policy` | Hotspot high VO mean + P95 by policy |
+| 09 | `hotspot_vo_p95_by_load` | Hotspot plain vs emergency VO P95 by load |
+| 10 | `regime_vo_p95_contrast` | Netload high vs hotspot high VO P95 |
 
-Figures are **omitted** when required metrics or samples are absent.
+Figures are **omitted** when required metrics or samples are absent. Default export skips audit heatmaps (02/03).
 
 ## Troubleshooting
 

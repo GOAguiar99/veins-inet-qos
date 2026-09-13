@@ -9,6 +9,8 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod figures;
+
 const CACHE_SCHEMA_VERSION: u32 = 3;
 const PARSER_VERSION: &str = "rust-kpi-dashboard-0.2.1";
 const CACHE_DIR_NAME: &str = ".kpi_cache_rs";

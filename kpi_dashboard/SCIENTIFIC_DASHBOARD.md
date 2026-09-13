@@ -49,15 +49,20 @@ The Rust server at `http://127.0.0.1:8050` currently exposes **four auditable ta
 
 ## Recommended Figures
 
-| Figure | Research question | Chart | Primary metrics |
-| --- | --- | --- | --- |
-| `fig_01_p95_delay_priority_gap_<density>` | Does crash VO traffic obtain lower tail delay than BE under contention? | Grouped bar chart, high load | BE/VO P95 delay |
-| `fig_02_mac_drop_rate_by_strategy_load_<density>` | How quickly does contention translate into normalized packet loss as offered load grows? | Strategy x workload heatmap | MAC drops / app TX |
-| `fig_03_vo_reception_by_strategy_load_<density>` | Which MAC strategy preserves crash-message reception as load increases? | Strategy x workload heatmap | VO RX / logical TX |
-| `fig_04_latency_jitter_tradeoff_<density>` | Does prioritization reduce latency without unstable delay variation? | Scatter plot | Mean delay, jitter, access category |
-| `fig_05_mac_drop_attribution_high_load_<density>` | Are losses concentrated in BE, VO, or unclassified MAC behavior? | Stacked bar chart | BE/VO/unclassified MAC drops |
-| `fig_06_vo_delay_cdf_high_load_<density>` | Does prioritization improve the full VO delay distribution? | Empirical CDF | VO delay vector samples |
-| `fig_07_v2x_control_actions_by_load_<density>` | How often do tuned modes actively protect VO by suppressing BE? | Grouped bar chart | VO protection activations, BE grants suppressed |
+Default canvas is **720×480** (publication preset). The exporter prefers a valid `.kpi_cache_rs` when present, otherwise rebuilds from `.sca`/`.vec`. Heatmaps **02/03 are audit-only** (omitted from the default thesis export; pass `--figures 02 03` explicitly). Cross-regime figures **04/08/09/10** are written once with density stem `highway_heavy` (use `--summary-json` for hotspot archives without local `.sca`).
+
+| Figure | Research question | Chart | Primary metrics | Notes |
+| --- | --- | --- | --- | --- |
+| `fig_01_p95_delay_priority_gap_<density>` | Does VO keep a low P95 while BE absorbs prioritization cost? | Dual-panel bars (VO P95 / BE P95) at netload high | VO/BE P95 delay | Per density |
+| `fig_02_mac_drop_rate_by_strategy_load_<density>` | How quickly does contention translate into normalized packet loss? | Strategy × workload heatmap | MAC drops / app TX | Audit-only |
+| `fig_03_vo_reception_by_strategy_load_<density>` | Which MAC strategy preserves crash-message reception as load grows? | Strategy × workload heatmap | VO RX / logical TX | Audit-only |
+| `fig_04_vo_gain_vs_be_cost_highway_heavy` | Relative to DCF, how much VO P95 improves vs BE P95 cost? | Dual-panel scatter (ΔVO vs ΔBE), independent axes per regime; markers by policy | Δ VO/BE P95 vs plain | Cross-regime |
+| `fig_05_mac_drop_attribution_high_load_<density>` | Are losses concentrated in BE, VO, or other? | Stacked bars; legend BE/VO/Other | BE/VO/unclassified MAC drops | Netload high |
+| `fig_06_vo_delay_cdf_high_load_<density>` | Does prioritization improve the full VO delay distribution? | Empirical CDF | VO delay vector samples | Skipped on light under defaults |
+| `fig_07_v2x_control_actions_by_load_<density>` | How do VO protection and BE blocking scale with load? | Triple panel × load sweep | VO protection, BE grants suppressed, BE dropped while blocked | Per density |
+| `fig_08_hotspot_vo_delay_by_policy_highway_heavy` | Under hotspot high, how do VO mean and P95 compare by policy? | Grouped bars | VO mean, VO P95 | Hotspot |
+| `fig_09_hotspot_vo_p95_by_load_highway_heavy` | How does Emergency VO P95 compare with DCF across hotspot load? | Grouped bars by load | VO P95 (plain vs emergency) | Hotspot |
+| `fig_10_regime_vo_p95_contrast_highway_heavy` | How does high-load VO P95 differ between netload and hotspot? | Paired bars by policy | VO P95 | Cross-regime |
 
 These figures are intentionally comparative. Raw run tables remain available for auditability, but paper figures should focus on differences across strategies, workloads, densities, and access categories.
 
@@ -81,12 +86,15 @@ cd /home/goaguiar/master/master_veins/kpi_dashboard
 cargo run --release --bin export_figures -- \
   --results ../veins_qos/simulations/veins_inet_highway_light/results \
   --results ../veins_qos/simulations/veins_inet_highway_heavy/results \
+  --summary-json ../../Masters/context/eval-kpis/highway_heavy_hotspot/config_summary.json \
+  --summary-json ../../Masters/context/eval-kpis/highway_heavy/config_summary.json \
+  --summary-json ../../Masters/context/eval-kpis/highway_light/config_summary.json \
   --output publication_figures \
   --formats svg,png,pdf \
   --dpi 300
 ```
 
-The exporter always writes SVG. PNG and PDF are written when either `rsvg-convert` or `inkscape` is installed. If neither converter exists, the SVG files remain the canonical publication artifacts.
+The exporter writes SVG always. PNG and PDF are written when either `rsvg-convert` or `inkscape` is installed. If neither converter exists, the SVG files remain the canonical publication artifacts. A valid `.kpi_cache_rs` is reused when present; otherwise results are rebuilt from raw files.
 
 ## Naming Convention
 
@@ -104,9 +112,9 @@ Use the same filename stem in LaTeX and change only the extension required by th
 
 ## Publication Defaults
 
-- Canvas size: `1400 x 900 px`
+- Canvas size: `720 x 480 px` (publication preset; tall variants for multi-panel figures)
 - Raster export: `300 dpi`
-- Font family: Arial/Helvetica-compatible sans serif
+- Font family: Times New Roman / serif
 - Background: white
 - Color encoding:
   - BE: blue (`#4c78a8`)
