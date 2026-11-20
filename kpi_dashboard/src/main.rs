@@ -32,7 +32,7 @@ struct Cli {
     #[arg(long, default_value_t = 8050)]
     port: u16,
 
-    #[arg(long, default_value = "plain_netload_high")]
+    #[arg(long, default_value = "plain")]
     baseline: String,
 
     #[arg(long)]

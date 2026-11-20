@@ -406,7 +406,8 @@ pub fn build_dashboard_response(
 ) -> DashboardResponse {
     let warnings = dataset.warnings.clone();
 
-    let baseline_options = baseline_option_values(&dataset.config_summary);
+    let baseline_options = baseline_policy_options(&dataset.config_summary);
+    let config_summary_rows = sorted_config_summary(&dataset.config_summary);
     let (comparison_rows, baseline) =
         build_comparison_rows(&dataset.config_summary, requested_baseline);
     let v2x_rows = build_v2x_variant_matrix(&dataset.config_summary, baseline.as_deref());
@@ -425,11 +426,11 @@ pub fn build_dashboard_response(
         },
         config_summary: Table {
             columns: visible_columns(
-                &high_load_only_or_all(&dataset.config_summary),
+                &config_summary_rows,
                 CONFIG_SUMMARY_TABLE_COLUMNS,
                 &ALWAYS_VISIBLE,
             ),
-            rows: high_load_only_or_all(&dataset.config_summary),
+            rows: config_summary_rows,
         },
         run_details: Table {
             columns: visible_columns(&dataset.run_rows, RUN_ROW_COLUMNS, &ALWAYS_VISIBLE),
@@ -1137,40 +1138,34 @@ fn build_config_summary(rows: &[RunRow]) -> Vec<ConfigSummary> {
     summaries
 }
 
+/// Compares every config with the baseline policy run under the *same* workload
+/// (e.g. `edca_v2x_vo_emergency_hotspot_high` vs `plain_hotspot_high`), so uniform
+/// and hotspot results are never mixed in one delta.
 fn build_comparison_rows(
     config_summary: &[ConfigSummary],
     requested_baseline: &str,
 ) -> (Vec<BTreeMap<String, Value>>, Option<String>) {
-    let comparison_source = high_load_only_or_all(config_summary);
-    if comparison_source.is_empty() {
-        return (Vec::new(), None);
-    }
-
-    let baseline = if comparison_source
-        .iter()
-        .any(|summary| summary.config == requested_baseline)
-    {
-        requested_baseline.to_string()
-    } else {
-        preferred_baseline(&comparison_source).unwrap_or_default()
-    };
-    if baseline.is_empty() {
-        return (Vec::new(), None);
-    }
-    let Some(base) = comparison_source
-        .iter()
-        .find(|summary| summary.config == baseline)
-    else {
+    let options = baseline_policy_options(config_summary);
+    let Some(baseline) = resolve_baseline_policy(&options, requested_baseline) else {
         return (Vec::new(), None);
     };
-    let base_metrics = base.metrics.clone();
+    let by_config: HashMap<&str, &ConfigSummary> = config_summary
+        .iter()
+        .map(|summary| (summary.config.as_str(), summary))
+        .collect();
 
     let mut rows = Vec::new();
-    for summary in &comparison_source {
+    for summary in config_summary {
+        let (_, workload) = split_policy_workload(&summary.config);
+        let base_config = format!("{baseline}_{workload}");
+        let Some(base) = by_config.get(base_config.as_str()) else {
+            continue;
+        };
+        let base_metrics = &base.metrics;
         let mut row = BTreeMap::new();
         insert_string(&mut row, "config", &summary.config);
         insert_number(&mut row, "runs", Some(summary.runs as f64));
-        insert_string(&mut row, "baseline", &baseline);
+        insert_string(&mut row, "baseline", &base_config);
         add_comparison_metric(
             &mut row,
             "vo_delay_ms",
@@ -1390,7 +1385,7 @@ fn build_v2x_variant_matrix(
         }
     }
     let baseline_variant = selected_baseline
-        .and_then(|config| extract_matrix_variant_and_workload(config).map(|(variant, _)| variant))
+        .map(matrix_variant_of_policy)
         .unwrap_or_else(|| "edca_only".to_string());
 
     let mut workloads: Vec<String> = by_workload.keys().cloned().collect();
@@ -1672,7 +1667,7 @@ fn delay_histogram(values_s: &[f64]) -> Vec<u32> {
 }
 
 /// Split `<policy>_<workload>` config names, e.g. `edca_v2x_vo_stable_hotspot_high`
-/// -> (`edca_v2x_vo_stable`, `hotspot_high`). Legacy `_pb_` variants keep `_pb` in the policy.
+/// -> (`edca_v2x_vo_stable`, `hotspot_high`).
 pub fn split_policy_workload(config: &str) -> (String, String) {
     const POLICIES: [&str; 5] = [
         "edca_v2x_vo_emergency",
@@ -1683,9 +1678,6 @@ pub fn split_policy_workload(config: &str) -> (String, String) {
     ];
     for policy in POLICIES {
         if let Some(rest) = config.strip_prefix(policy).and_then(|rest| rest.strip_prefix('_')) {
-            if let Some(workload) = rest.strip_prefix("pb_") {
-                return (format!("{policy}_pb"), workload.to_string());
-            }
             return (policy.to_string(), rest.to_string());
         }
     }
@@ -1889,110 +1881,84 @@ fn sorted_run_rows(rows: &[RunRow]) -> Vec<RunRow> {
     rows
 }
 
-fn config_sort_tuple(config: &str) -> (usize, usize, String) {
-    let lower = config.to_lowercase();
-    let base_rank = if lower.starts_with("plain") {
-        0
-    } else if lower.starts_with("edca_only") {
-        1
-    } else if lower.starts_with("edca_v2x_vo_stable") {
-        2
-    } else if lower.starts_with("edca_v2x_vo_guarded") {
-        3
-    } else if lower.starts_with("edca_v2x_vo_emergency") {
-        4
-    } else if lower.starts_with("edca_v2x") {
-        5
-    } else {
-        99
+fn policy_rank(policy: &str) -> usize {
+    match policy {
+        "plain" => 0,
+        "edca_only" => 1,
+        "edca_v2x_vo_stable" => 2,
+        "edca_v2x_vo_guarded" => 3,
+        "edca_v2x_vo_emergency" => 4,
+        _ => 99,
+    }
+}
+
+/// Workload order: uniform (`netload_*`) before hotspot, then by load level.
+fn workload_rank(workload: &str) -> (usize, usize) {
+    let (family, level) = workload.rsplit_once('_').unwrap_or(("", workload));
+    let family_rank = match family {
+        "netload" => 0,
+        "hotspot" => 1,
+        _ => 2,
     };
-    (base_rank, workload_rank(config_workload(&lower)), lower)
+    let level_rank = match level {
+        "low" => 0,
+        "medium" => 1,
+        "high" => 2,
+        "stress" => 3,
+        _ => 99,
+    };
+    (family_rank, level_rank)
+}
+
+/// Group configs by workload first, so each workload's policies sit together.
+fn config_sort_tuple(config: &str) -> ((usize, usize), usize, String) {
+    let (policy, workload) = split_policy_workload(config);
+    (workload_rank(&workload), policy_rank(&policy), config.to_string())
 }
 
 fn compare_configs(left: &str, right: &str) -> std::cmp::Ordering {
     config_sort_tuple(left).cmp(&config_sort_tuple(right))
 }
 
-fn config_workload(config: &str) -> &str {
-    config
-        .rsplit_once("_netload_")
-        .map(|(_, workload)| workload)
-        .unwrap_or("medium")
+fn sorted_config_summary(config_summary: &[ConfigSummary]) -> Vec<ConfigSummary> {
+    let mut rows = config_summary.to_vec();
+    rows.sort_by(|left, right| compare_configs(&left.config, &right.config));
+    rows
 }
 
-fn workload_rank(workload: &str) -> usize {
-    match workload {
-        "low" => 0,
-        "medium" => 1,
-        "high" => 2,
-        _ => 99,
-    }
-}
-
-fn is_high_load_config(config: &str) -> bool {
-    config.ends_with("_netload_high")
-}
-
-fn high_load_only_or_all(config_summary: &[ConfigSummary]) -> Vec<ConfigSummary> {
-    let high_load: Vec<ConfigSummary> = config_summary
+fn baseline_policy_options(config_summary: &[ConfigSummary]) -> Vec<String> {
+    let mut policies: Vec<String> = config_summary
         .iter()
-        .filter(|summary| is_high_load_config(&summary.config))
-        .cloned()
+        .map(|summary| split_policy_workload(&summary.config).0)
         .collect();
-    if high_load.is_empty() {
-        config_summary.to_vec()
-    } else {
-        high_load
-    }
+    policies.sort_by_key(|policy| (policy_rank(policy), policy.clone()));
+    policies.dedup();
+    policies
 }
 
-fn baseline_option_values(config_summary: &[ConfigSummary]) -> Vec<String> {
-    let mut values: Vec<String> = high_load_only_or_all(config_summary)
+/// Accepts a policy (`plain`) or, for old links and CLI defaults, a full config
+/// name (`plain_netload_high`); falls back to `plain`, then `edca_only`.
+fn resolve_baseline_policy(options: &[String], requested: &str) -> Option<String> {
+    let requested_policy = split_policy_workload(requested).0;
+    let chosen = [requested, requested_policy.as_str(), "plain", "edca_only"]
         .into_iter()
-        .map(|summary| summary.config)
-        .collect();
-    values.sort_by(|left, right| compare_configs(left, right));
-    values
-}
-
-fn preferred_baseline(config_summary: &[ConfigSummary]) -> Option<String> {
-    let config_set: Vec<&str> = config_summary
-        .iter()
-        .map(|summary| summary.config.as_str())
-        .collect();
-    for candidate in [
-        "plain_netload_high",
-        "plain",
-        "highway_plain",
-        "square_plain",
-        "edca_only_netload_high",
-        "edca_only",
-        "highway_edca_only",
-    ] {
-        if config_set.contains(&candidate) {
-            return Some(candidate.to_string());
-        }
-    }
-    let mut values: Vec<String> = config_summary
-        .iter()
-        .map(|summary| summary.config.clone())
-        .collect();
-    values.sort_by(|left, right| compare_configs(left, right));
-    values.into_iter().next()
+        .find(|candidate| options.iter().any(|option| option == candidate))
+        .map(str::to_string);
+    chosen.or_else(|| options.first().cloned())
 }
 
 fn extract_matrix_variant_and_workload(config: &str) -> Option<(String, String)> {
-    if let Some(workload) = config.strip_prefix("plain_netload_") {
-        return Some(("plain".to_string(), workload.to_string()));
+    let (policy, workload) = split_policy_workload(config);
+    if workload.is_empty() {
+        return None;
     }
-    if let Some(workload) = config.strip_prefix("edca_only_netload_") {
-        return Some(("edca_only".to_string(), workload.to_string()));
-    }
+    let variant = policy.strip_prefix("edca_v2x_vo_").unwrap_or(&policy);
+    matches!(variant, "plain" | "edca_only" | "stable" | "guarded" | "emergency")
+        .then(|| (variant.to_string(), workload.clone()))
+}
 
-    let rest = config.strip_prefix("edca_v2x_vo_")?;
-    let (variant, workload) = rest.split_once("_netload_")?;
-    matches!(variant, "stable" | "guarded" | "emergency")
-        .then(|| (variant.to_string(), workload.to_string()))
+fn matrix_variant_of_policy(policy: &str) -> String {
+    policy.strip_prefix("edca_v2x_vo_").unwrap_or(policy).to_string()
 }
 
 fn visible_columns<T: Serialize>(rows: &[T], preferred: &[&str], always: &[&str]) -> Vec<Column> {
@@ -2201,8 +2167,7 @@ fn v2x_matrix_columns(
     selected_baseline: Option<&str>,
 ) -> Vec<Column> {
     let baseline_label = selected_baseline
-        .and_then(|config| extract_matrix_variant_and_workload(config).map(|(variant, _)| variant))
-        .map(|variant| matrix_variant_label(&variant))
+        .map(|policy| matrix_variant_label(&matrix_variant_of_policy(policy)))
         .unwrap_or("EDCA Only");
     visible_columns(rows, V2X_VARIANT_MATRIX_COLUMNS, &ALWAYS_VISIBLE)
         .into_iter()
@@ -2396,9 +2361,43 @@ vector 2 Scenario.node[0].app[0] voEndToEndDelay:vector ETV
             split_policy_workload("plain_netload_low"),
             ("plain".to_string(), "netload_low".to_string())
         );
+    }
+
+    #[test]
+    fn comparison_uses_same_workload_baseline() {
+        let summary = |config: &str, vo_p95: f64| ConfigSummary {
+            config: config.to_string(),
+            runs: 3,
+            metrics: NumericMetrics {
+                vo_delay_p95_ms: Some(vo_p95),
+                ..Default::default()
+            },
+        };
+        let configs = vec![
+            summary("plain_netload_high", 2.0),
+            summary("edca_v2x_vo_emergency_netload_high", 2.0),
+            summary("plain_hotspot_high", 20.0),
+            summary("edca_v2x_vo_emergency_hotspot_high", 15.0),
+        ];
+        // Legacy full-name baseline resolves to the policy.
+        let (rows, baseline) = build_comparison_rows(&configs, "plain_netload_high");
+        assert_eq!(baseline.as_deref(), Some("plain"));
+        let row = rows
+            .iter()
+            .find(|row| row["config"] == "edca_v2x_vo_emergency_hotspot_high")
+            .unwrap();
+        assert_eq!(row["baseline"], "plain_hotspot_high");
+        assert_eq!(row["vo_delay_p95_delta_ms"].as_f64(), Some(-5.0));
+        // Grouped by workload: uniform rows before hotspot rows.
+        let order: Vec<&str> = rows.iter().map(|row| row["config"].as_str().unwrap()).collect();
         assert_eq!(
-            split_policy_workload("edca_v2x_vo_guarded_pb_multivo_burstgap"),
-            ("edca_v2x_vo_guarded_pb".to_string(), "multivo_burstgap".to_string())
+            order,
+            [
+                "plain_netload_high",
+                "edca_v2x_vo_emergency_netload_high",
+                "plain_hotspot_high",
+                "edca_v2x_vo_emergency_hotspot_high",
+            ]
         );
     }
 
