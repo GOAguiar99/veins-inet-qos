@@ -329,7 +329,7 @@
     </section>
 
     <section id="comparison-section" class="block">
-      <div class="block-head"><h2>Comparison vs baseline</h2><span class="block-note">High-load configs; deltas relative to the selected baseline</span></div>
+      <div class="block-head"><h2>Comparison vs baseline</h2><span class="block-note">Each config vs the baseline policy under the same workload (hotspot vs hotspot, uniform vs uniform)</span></div>
       <div id="comparison"></div>
     </section>
     <section id="config-section" class="block">
@@ -375,7 +375,7 @@
         ? new Date(info.built_at_unix_secs * 1000).toLocaleString()
         : 'n/a';
       document.getElementById('status').innerHTML = `
-        <span><strong>${escapeHtml(info.cache_state)}</strong> · ${escapeHtml(info.source_kind)} · ${data.rebuild.running ? 'rebuilding' : 'ready'}</span>
+        <span><strong>${escapeHtml(info.cache_state)}</strong> · ${escapeHtml(info.source_kind)}</span>
         <span><strong>${escapeHtml(info.run_count)}</strong> runs · <strong>${escapeHtml(info.config_count)}</strong> configs</span>
         <span>cache built ${escapeHtml(built)}</span>
         <span title="${escapeHtml(info.results_dir)}">${escapeHtml(shortPath(info.results_dir))}</span>
@@ -534,15 +534,10 @@
     };
     function policyStyle(policy) {
       if (POLICY_STYLE[policy]) return POLICY_STYLE[policy];
-      const base = policy.replace(/_pb$/, '');
-      if (POLICY_STYLE[base]) {
-        const style = POLICY_STYLE[base];
-        return { label: `${style.label} (PB)`, color: style.color, dash: '1 3', order: style.order + 0.5 };
-      }
       return { label: policy, color: '#6b7280', dash: '1 2', order: 99 };
     }
 
-    const WORKLOAD_FAMILY = ['netload', 'hotspot', 'multivo'];
+    const WORKLOAD_FAMILY = ['netload', 'hotspot'];
     const WORKLOAD_LEVEL = ['low', 'medium', 'high'];
     function workloadRank(workload) {
       const [family, ...rest] = workload.split('_');
@@ -553,7 +548,7 @@
     }
     function workloadLabel(workload) {
       const [family, ...rest] = workload.split('_');
-      const names = { netload: 'Uniform', hotspot: 'Hotspot', multivo: 'Multi-VO (legacy)' };
+      const names = { netload: 'Uniform', hotspot: 'Hotspot' };
       return `${names[family] || family} · ${rest.join(' ')}  (${workload})`;
     }
 
@@ -924,7 +919,6 @@
       loadDistributions(data.density).catch((error) => {
         document.getElementById('dist-chart').innerHTML = `<div class="empty">Failed to load distributions: ${escapeHtml(error)}</div>`;
       });
-      if (data.rebuild && data.rebuild.running) window.setTimeout(loadDashboard, 5000);
     }
 
     loadDashboard().catch((error) => {
