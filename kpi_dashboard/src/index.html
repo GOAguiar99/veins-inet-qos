@@ -1,0 +1,935 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Veins QoS KPI Dashboard</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #ffffff;
+      --panel: #f7f9fb;
+      --panel-strong: #eef3f7;
+      --ink: #16202a;
+      --ink-2: #25313d;
+      --muted: #5c6670;
+      --line: #d7dde4;
+      --grid: #e7ebef;
+      --accent: #0f766e;
+      --accent-bg: #e6f4f2;
+      --warn: #9a3412;
+      --warn-bg: #fff7ed;
+      --warn-line: #fed7aa;
+      --zebra: #fbfcfd;
+      --shadow: 0 6px 24px rgba(15, 23, 42, 0.12);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --bg: #111418;
+        --panel: #181c21;
+        --panel-strong: #1f252c;
+        --ink: #e6eaee;
+        --ink-2: #cfd6dd;
+        --muted: #9aa4ae;
+        --line: #2c343d;
+        --grid: #232a31;
+        --accent: #3fb8a9;
+        --accent-bg: #15302d;
+        --warn: #fdba74;
+        --warn-bg: #2a1d12;
+        --warn-line: #5c3a1c;
+        --zebra: #15191d;
+        --shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      width: min(1600px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 18px 0 40px;
+    }
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding-bottom: 12px;
+    }
+    h1 { margin: 0; font-size: 24px; line-height: 1.2; }
+    .subtitle { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+    h2 { margin: 0; font-size: 17px; }
+    section.block { margin-top: 26px; scroll-margin-top: 64px; }
+    .block-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .block-note { color: var(--muted); font-size: 12px; }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      padding: 8px 0;
+      background: var(--bg);
+      border-bottom: 1px solid var(--line);
+    }
+    nav a {
+      flex: none;
+      padding: 6px 10px;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    nav a:hover, nav a.active { color: var(--accent); background: var(--accent-bg); }
+    .controls { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+    label.field {
+      display: grid;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    select, button, input[type="search"] {
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--ink);
+      font: inherit;
+      font-size: 14px;
+      padding: 0 10px;
+    }
+    button { cursor: pointer; }
+    button.primary { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+    .field-group { display: grid; gap: 4px; }
+    .segmented {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+      height: 34px;
+    }
+    .segmented button {
+      height: 100%;
+      border: 0;
+      border-radius: 0;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      padding: 0 12px;
+    }
+    .segmented button + button { border-left: 1px solid var(--line); }
+    .segmented button[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent); }
+    .range { display: flex; align-items: center; gap: 8px; height: 34px; }
+    .range input { width: 140px; accent-color: var(--accent); }
+    .range output { min-width: 92px; color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; }
+    .status {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 18px;
+      margin-top: 10px;
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .status strong { color: var(--ink); }
+    .warnings { margin-top: 10px; display: grid; gap: 6px; }
+    .warning {
+      border: 1px solid var(--warn-line);
+      border-radius: 6px;
+      background: var(--warn-bg);
+      color: var(--warn);
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: var(--bg);
+    }
+    .legend { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 4px; }
+    .legend button {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      height: 30px;
+      font-size: 13px;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    .legend button[aria-pressed="false"] { opacity: 0.42; text-decoration: line-through; }
+    .legend svg { flex: none; }
+    .chart { position: relative; width: 100%; }
+    .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .chart .axis text { fill: var(--muted); font-size: 12px; }
+    .chart .axis-title { fill: var(--ink-2); font-size: 12px; font-weight: 600; }
+    .chart .gridline { stroke: var(--grid); stroke-width: 1; }
+    .chart .baseline { stroke: var(--muted); stroke-width: 1; }
+    .chart .crosshair { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+    .chart .series { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+    .chart .dot { stroke: var(--bg); stroke-width: 2; }
+    .tooltip {
+      position: absolute;
+      pointer-events: none;
+      min-width: 190px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--bg);
+      box-shadow: var(--shadow);
+      font-size: 12px;
+      color: var(--ink);
+      display: none;
+    }
+    .tooltip .tt-head { font-weight: 700; margin-bottom: 4px; }
+    .tooltip .tt-row { display: flex; align-items: center; gap: 8px; line-height: 1.6; }
+    .tooltip .tt-row span:last-child { margin-left: auto; font-variant-numeric: tabular-nums; }
+    .caption { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .table-tools {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .table-tools .left, .table-tools .right { display: flex; align-items: center; gap: 8px; }
+    .table-tools input[type="search"] { width: 240px; font-size: 13px; }
+    .row-count, .copy-status { color: var(--muted); font-size: 12px; }
+    .table-wrap {
+      overflow: auto;
+      max-height: 70vh;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.wide { min-width: 980px; }
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 7px 8px;
+      text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--panel-strong);
+      color: var(--ink-2);
+      font-size: 12px;
+    }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: var(--accent); }
+    th .sort { color: var(--accent); margin-left: 4px; }
+    tbody tr:nth-child(even) td { background: var(--zebra); }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    td.neg { color: #15803d; }
+    td.pos { color: #b91c1c; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) td.neg { color: #4ade80; }
+      :root:not([data-theme="light"]) td.pos { color: #f87171; }
+    }
+    .swatch { display: inline-block; width: 18px; }
+    .empty { color: var(--muted); padding: 16px 0; font-size: 13px; }
+    @media (max-width: 720px) {
+      main { width: calc(100vw - 32px); }
+      h1 { font-size: 20px; }
+      .controls, .controls label.field, .controls select { width: 100%; }
+      .table-tools input[type="search"] { width: 100%; }
+      .range input { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Veins QoS KPI Dashboard</h1>
+        <p class="subtitle">Crash-aware vehicular Wi-Fi: Voice protection vs Best Effort cost across MAC policies, loads and densities.</p>
+      </div>
+      <div class="controls">
+        <label class="field">Scenario
+          <select id="density"></select>
+        </label>
+        <label class="field">Baseline
+          <select id="baseline"></select>
+        </label>
+        <button id="reload" class="primary" type="button">Reload</button>
+      </div>
+    </header>
+    <nav id="nav">
+      <a href="#distribution">Delay distribution</a>
+      <a href="#comparison-section">Comparison vs baseline</a>
+      <a href="#config-section">Config summary</a>
+      <a href="#v2x-section">V2X mode matrix</a>
+      <a href="#runs-section">Run details</a>
+    </nav>
+    <section id="status" class="status"></section>
+    <section id="warnings" class="warnings"></section>
+
+    <section id="distribution" class="block">
+      <div class="block-head">
+        <h2>Delay distribution by policy</h2>
+        <span class="block-note">Per-packet end-to-end delay from the .vec traces, seeds pooled</span>
+      </div>
+      <div class="card">
+        <div class="controls">
+          <label class="field">Workload
+            <select id="dist-workload"></select>
+          </label>
+          <div class="field-group">
+            <label class="field">Traffic class</label>
+            <div class="segmented" id="dist-class">
+              <button type="button" data-value="vo">Voice</button>
+              <button type="button" data-value="be">Best Effort</button>
+            </div>
+          </div>
+          <div class="field-group">
+            <label class="field">View</label>
+            <div class="segmented" id="dist-view">
+              <button type="button" data-value="density">Density</button>
+              <button type="button" data-value="cdf">CDF</button>
+            </div>
+          </div>
+          <div class="field-group" id="dist-smoothing-group">
+            <label class="field" for="dist-bw">Smoothing</label>
+            <div class="range">
+              <input id="dist-bw" type="range" min="0" max="0.2" step="0.01" value="0.04">
+              <output id="dist-bw-out"></output>
+            </div>
+          </div>
+        </div>
+        <div class="legend" id="dist-legend"></div>
+        <div class="chart" id="dist-chart"></div>
+        <p class="caption" id="dist-caption"></p>
+        <div id="dist-stats" style="margin-top:12px"></div>
+      </div>
+    </section>
+
+    <section id="comparison-section" class="block">
+      <div class="block-head"><h2>Comparison vs baseline</h2><span class="block-note">High-load configs; deltas relative to the selected baseline</span></div>
+      <div id="comparison"></div>
+    </section>
+    <section id="config-section" class="block">
+      <div class="block-head"><h2>Config summary</h2><span class="block-note">Arithmetic mean over runs</span></div>
+      <div id="config_summary"></div>
+    </section>
+    <section id="v2x-section" class="block">
+      <div class="block-head"><h2>V2X mode matrix</h2></div>
+      <div id="v2x_matrix"></div>
+    </section>
+    <section id="runs-section" class="block">
+      <div class="block-head"><h2>Run details</h2><span class="block-note">One row per result file</span></div>
+      <div id="run_details"></div>
+    </section>
+  </main>
+  <script>
+    const density = document.getElementById('density');
+    const baseline = document.getElementById('baseline');
+    const nf = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 });
+    let lastDensity = '';
+    let lastBaseline = '';
+
+    // ---------- per-viewer UI preferences (best effort) ----------
+    const PREF_KEY = 'kpi-dashboard-prefs-v1';
+    function loadPrefs() {
+      try { return JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch (_e) { return {}; }
+    }
+    function savePrefs() {
+      try { localStorage.setItem(PREF_KEY, JSON.stringify(dist.prefs)); } catch (_e) { /* ignore */ }
+    }
+
+    document.getElementById('reload').addEventListener('click', () => {
+      distCache.clear();
+      loadDashboard();
+    });
+    density.addEventListener('change', () => { lastDensity = density.value; loadDashboard(); });
+    baseline.addEventListener('change', () => { lastBaseline = baseline.value; loadDashboard(); });
+
+    // ---------- status ----------
+    function renderStatus(data) {
+      const info = data.cache_info;
+      const built = info.built_at_unix_secs
+        ? new Date(info.built_at_unix_secs * 1000).toLocaleString()
+        : 'n/a';
+      document.getElementById('status').innerHTML = `
+        <span><strong>${escapeHtml(info.cache_state)}</strong> · ${escapeHtml(info.source_kind)} · ${data.rebuild.running ? 'rebuilding' : 'ready'}</span>
+        <span><strong>${escapeHtml(info.run_count)}</strong> runs · <strong>${escapeHtml(info.config_count)}</strong> configs</span>
+        <span>cache built ${escapeHtml(built)}</span>
+        <span title="${escapeHtml(info.results_dir)}">${escapeHtml(shortPath(info.results_dir))}</span>
+      `;
+      document.getElementById('warnings').innerHTML = (data.warnings || []).map((warning) =>
+        `<div class="warning">${escapeHtml(warning)}</div>`).join('');
+    }
+
+    function shortPath(path) {
+      const parts = String(path).split('/');
+      return parts.length > 3 ? '…/' + parts.slice(-3).join('/') : path;
+    }
+
+    function syncSelect(select, options, selected) {
+      select.innerHTML = options.map(([value, label]) =>
+        `<option value="${escapeHtml(value)}"${value === selected ? ' selected' : ''}>${escapeHtml(label)}</option>`
+      ).join('');
+      if (selected && select.value !== selected) select.value = selected;
+      return select.value || selected;
+    }
+
+    // ---------- tables: sortable + filterable ----------
+    const tableState = {};
+
+    function renderTable(targetId, table) {
+      const target = document.getElementById(targetId);
+      if (!table || !table.rows || table.rows.length === 0) {
+        target.innerHTML = '<div class="empty">No rows</div>';
+        return;
+      }
+      const state = tableState[targetId] || (tableState[targetId] = { filter: '', sort: null, dir: 1 });
+      state.table = table;
+      target.innerHTML = `
+        <div class="table-tools">
+          <div class="left">
+            <input type="search" placeholder="Filter rows…" value="${escapeHtml(state.filter)}" aria-label="Filter rows">
+            <span class="row-count"></span>
+          </div>
+          <div class="right">
+            <span class="copy-status"></span>
+            <button type="button" class="primary" data-copy>Copy table</button>
+          </div>
+        </div>
+        <div class="table-wrap"><table class="${table.columns.length > 6 ? 'wide' : ''}"><thead></thead><tbody></tbody></table></div>
+      `;
+      const input = target.querySelector('input[type="search"]');
+      input.addEventListener('input', () => { state.filter = input.value; drawTableBody(targetId); });
+      target.querySelector('[data-copy]').addEventListener('click', () => copyTable(targetId));
+      drawTableBody(targetId);
+    }
+
+    function visibleRows(state) {
+      const { table } = state;
+      const needle = state.filter.trim().toLowerCase();
+      let rows = table.rows;
+      if (needle) {
+        rows = rows.filter((row) => table.columns.some((column) => {
+          const value = row[column.id];
+          return typeof value === 'string' && value.toLowerCase().includes(needle);
+        }));
+      }
+      if (state.sort) {
+        const key = state.sort;
+        rows = rows.slice().sort((a, b) => {
+          const left = a[key];
+          const right = b[key];
+          if (left === null || left === undefined) return 1;
+          if (right === null || right === undefined) return -1;
+          if (typeof left === 'number' && typeof right === 'number') return (left - right) * state.dir;
+          return String(left).localeCompare(String(right)) * state.dir;
+        });
+      }
+      return rows;
+    }
+
+    function drawTableBody(targetId) {
+      const target = document.getElementById(targetId);
+      const state = tableState[targetId];
+      const { table } = state;
+      const rows = visibleRows(state);
+      const numeric = new Set(table.columns
+        .filter((column) => table.rows.some((row) => typeof row[column.id] === 'number'))
+        .map((column) => column.id));
+      target.querySelector('thead').innerHTML = '<tr>' + table.columns.map((column) => {
+        const arrow = state.sort === column.id ? `<span class="sort">${state.dir > 0 ? '▲' : '▼'}</span>` : '';
+        return `<th class="sortable${numeric.has(column.id) ? ' num' : ''}" data-col="${escapeHtml(column.id)}" title="Sort">${escapeHtml(column.label)}${arrow}</th>`;
+      }).join('') + '</tr>';
+      target.querySelector('tbody').innerHTML = rows.map((row) => '<tr>' + table.columns.map((column) => {
+        const value = row[column.id];
+        if (typeof value !== 'number') return `<td>${formatValue(value)}</td>`;
+        const signed = /delta/.test(column.id) && value !== 0 ? (value < 0 ? ' neg' : ' pos') : '';
+        return `<td class="num${signed}">${formatValue(value)}</td>`;
+      }).join('') + '</tr>').join('');
+      target.querySelector('.row-count').textContent =
+        rows.length === table.rows.length ? `${rows.length} rows` : `${rows.length} of ${table.rows.length} rows`;
+      target.querySelectorAll('th[data-col]').forEach((th) => th.addEventListener('click', () => {
+        const column = th.dataset.col;
+        if (state.sort === column) {
+          if (state.dir > 0) state.dir = -1; else { state.sort = null; state.dir = 1; }
+        } else { state.sort = column; state.dir = 1; }
+        drawTableBody(targetId);
+      }));
+    }
+
+    async function copyTable(targetId) {
+      const target = document.getElementById(targetId);
+      const state = tableState[targetId];
+      const rows = visibleRows(state);
+      const header = state.table.columns.map((column) => tsvCell(column.label)).join('\t');
+      const body = rows.map((row) => state.table.columns.map((column) => tsvCell(rawValue(row[column.id]))).join('\t'));
+      const text = [header, ...body].join('\n');
+      try { await navigator.clipboard.writeText(text); } catch (_error) { fallbackCopyText(text); }
+      const status = target.querySelector('.copy-status');
+      status.textContent = 'Copied';
+      window.setTimeout(() => { status.textContent = ''; }, 1800);
+    }
+
+    function rawValue(value) {
+      if (value === null || value === undefined) return 'N/A';
+      if (typeof value === 'number') return nf.format(value);
+      return String(value);
+    }
+    function tsvCell(value) {
+      return String(value).replaceAll('\t', ' ').replaceAll('\r', ' ').replaceAll('\n', ' ');
+    }
+    function fallbackCopyText(text) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      textarea.remove();
+    }
+    function formatValue(value) {
+      if (value === null || value === undefined) return 'N/A';
+      if (typeof value === 'number') return nf.format(value);
+      return escapeHtml(String(value));
+    }
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+    }
+
+    // ---------- delay distribution ----------
+    // Same colour + dash per policy as the publication figures (fig_01, fig_06, ...).
+    const POLICY_STYLE = {
+      plain: { label: 'DCF', color: '#b279a2', dash: '9 4 2 4', order: 0 },
+      edca_only: { label: 'EDCA', color: '#4c78a8', dash: '', order: 1 },
+      edca_v2x_vo_stable: { label: 'Stable', color: '#e45756', dash: '2 3', order: 2 },
+      edca_v2x_vo_guarded: { label: 'Guarded', color: '#54a24b', dash: '4 3', order: 3 },
+      edca_v2x_vo_emergency: { label: 'Emergency', color: '#f58518', dash: '8 3', order: 4 },
+    };
+    function policyStyle(policy) {
+      if (POLICY_STYLE[policy]) return POLICY_STYLE[policy];
+      const base = policy.replace(/_pb$/, '');
+      if (POLICY_STYLE[base]) {
+        const style = POLICY_STYLE[base];
+        return { label: `${style.label} (PB)`, color: style.color, dash: '1 3', order: style.order + 0.5 };
+      }
+      return { label: policy, color: '#6b7280', dash: '1 2', order: 99 };
+    }
+
+    const WORKLOAD_FAMILY = ['netload', 'hotspot', 'multivo'];
+    const WORKLOAD_LEVEL = ['low', 'medium', 'high'];
+    function workloadRank(workload) {
+      const [family, ...rest] = workload.split('_');
+      const level = rest.join('_');
+      const f = WORKLOAD_FAMILY.indexOf(family);
+      const l = WORKLOAD_LEVEL.indexOf(level);
+      return [f < 0 ? 99 : f, l < 0 ? 50 : l, workload];
+    }
+    function workloadLabel(workload) {
+      const [family, ...rest] = workload.split('_');
+      const names = { netload: 'Uniform', hotspot: 'Hotspot', multivo: 'Multi-VO (legacy)' };
+      return `${names[family] || family} · ${rest.join(' ')}  (${workload})`;
+    }
+
+    const prefs0 = loadPrefs();
+    const dist = {
+      data: null,
+      prefs: {
+        workload: prefs0.workload || 'netload_high',
+        cls: prefs0.cls || 'vo',
+        view: prefs0.view || 'density',
+        bw: typeof prefs0.bw === 'number' ? prefs0.bw : 0.04,
+        hidden: Array.isArray(prefs0.hidden) ? prefs0.hidden : [],
+      },
+      hover: null,
+    };
+    const distCache = new Map();
+    // URL parameters (?workload=hotspot_high&cls=be&view=cdf&bw=0.08) override saved prefs, so views are linkable.
+    {
+      const url = new URLSearchParams(window.location.search);
+      if (url.get('workload')) dist.prefs.workload = url.get('workload');
+      if (['vo', 'be'].includes(url.get('cls'))) dist.prefs.cls = url.get('cls');
+      if (['density', 'cdf'].includes(url.get('view'))) dist.prefs.view = url.get('view');
+      if (url.get('bw') !== null && !Number.isNaN(Number(url.get('bw')))) dist.prefs.bw = Math.min(0.2, Math.max(0, Number(url.get('bw'))));
+    }
+
+    const workloadSelect = document.getElementById('dist-workload');
+    const bwInput = document.getElementById('dist-bw');
+    const bwOut = document.getElementById('dist-bw-out');
+    workloadSelect.addEventListener('change', () => { dist.prefs.workload = workloadSelect.value; savePrefs(); renderDistribution(); });
+    bwInput.addEventListener('input', () => { dist.prefs.bw = Number(bwInput.value); savePrefs(); renderDistribution(); });
+    setupSegmented('dist-class', 'cls');
+    setupSegmented('dist-view', 'view');
+
+    function setupSegmented(id, key) {
+      const root = document.getElementById(id);
+      root.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
+        dist.prefs[key] = button.dataset.value;
+        savePrefs();
+        renderDistribution();
+      }));
+    }
+    function syncSegmented(id, value) {
+      document.getElementById(id).querySelectorAll('button').forEach((button) =>
+        button.setAttribute('aria-pressed', String(button.dataset.value === value)));
+    }
+
+    async function loadDistributions(densityId) {
+      if (!distCache.has(densityId)) {
+        const response = await fetch(`/api/distributions?density=${encodeURIComponent(densityId)}`, { cache: 'no-store' });
+        distCache.set(densityId, await response.json());
+      }
+      dist.data = distCache.get(densityId);
+      renderDistribution();
+    }
+
+    function computeSeries(counts, bins, view, bw) {
+      const n = bins.count;
+      const w = (bins.log10_ms_max - bins.log10_ms_min) / n;
+      const total = counts.reduce((a, b) => a + b, 0);
+      if (!total) return null;
+      const xs = [];
+      const ys = [];
+      if (view === 'cdf') {
+        let cum = 0;
+        xs.push(bins.log10_ms_min); ys.push(0);
+        for (let i = 0; i < n; i++) {
+          cum += counts[i];
+          xs.push(bins.log10_ms_min + (i + 1) * w);
+          ys.push(cum / total);
+        }
+      } else if (bw < 0.005) {
+        for (let i = 0; i < n; i++) {
+          xs.push(bins.log10_ms_min + i * w, bins.log10_ms_min + (i + 1) * w);
+          const y = counts[i] / (total * w);
+          ys.push(y, y);
+        }
+      } else {
+        const centers = [];
+        const nonzero = [];
+        for (let i = 0; i < n; i++) {
+          centers.push(bins.log10_ms_min + (i + 0.5) * w);
+          if (counts[i]) nonzero.push(i);
+        }
+        const norm = 1 / (total * bw * Math.sqrt(2 * Math.PI));
+        for (let j = 0; j < n; j++) {
+          let s = 0;
+          for (const i of nonzero) {
+            const z = (centers[j] - centers[i]) / bw;
+            if (z > -6 && z < 6) s += counts[i] * Math.exp(-0.5 * z * z);
+          }
+          xs.push(centers[j]);
+          ys.push(s * norm);
+        }
+      }
+      return { xs, ys, total };
+    }
+
+    // Quantile from binned counts, interpolated linearly in log10 within the bin.
+    function binnedQuantile(counts, bins, q) {
+      const n = bins.count;
+      const w = (bins.log10_ms_max - bins.log10_ms_min) / n;
+      const total = counts.reduce((a, b) => a + b, 0);
+      if (!total) return null;
+      const target = q * total;
+      let cum = 0;
+      for (let i = 0; i < n; i++) {
+        if (counts[i] && cum + counts[i] >= target) {
+          const frac = (target - cum) / counts[i];
+          return 10 ** (bins.log10_ms_min + (i + frac) * w);
+        }
+        cum += counts[i];
+      }
+      return 10 ** bins.log10_ms_max;
+    }
+
+    function niceLogTicks(lo, hi) {
+      const ticks = [];
+      for (let e = Math.floor(lo) - 1; e <= Math.ceil(hi); e++) {
+        for (const m of [1, 2, 5]) {
+          const v = Math.log10(m) + e;
+          if (v >= lo - 1e-9 && v <= hi + 1e-9) ticks.push(v);
+        }
+      }
+      return ticks;
+    }
+    function niceLinearTicks(max, count = 5) {
+      if (max <= 0) return [0];
+      const raw = max / count;
+      const mag = 10 ** Math.floor(Math.log10(raw));
+      const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw);
+      const top = Math.ceil(max / step - 1e-9) * step;
+      const ticks = [];
+      for (let v = 0; v <= top + step * 0.001; v += step) ticks.push(+v.toFixed(10));
+      return ticks;
+    }
+    function fmtMs(v) {
+      if (v === null || v === undefined) return 'N/A';
+      if (v < 1) return v.toFixed(3);
+      if (v < 10) return v.toFixed(2);
+      return v.toFixed(1);
+    }
+
+    function renderDistribution() {
+      const data = dist.data;
+      const chart = document.getElementById('dist-chart');
+      if (!data || !data.configs || !data.configs.length) {
+        chart.innerHTML = '<div class="empty">No delay histograms in the cache. Restart the dashboard with --rebuild to parse the .vec traces.</div>';
+        document.getElementById('dist-legend').innerHTML = '';
+        document.getElementById('dist-stats').innerHTML = '';
+        document.getElementById('dist-caption').textContent = '';
+        return;
+      }
+      const { prefs } = dist;
+      const workloads = [...new Set(data.configs.map((c) => c.workload))]
+        .sort((a, b) => { const ra = workloadRank(a), rb = workloadRank(b); return ra[0] - rb[0] || ra[1] - rb[1] || ra[2].localeCompare(rb[2]); });
+      if (!workloads.includes(prefs.workload)) prefs.workload = workloads.includes('netload_high') ? 'netload_high' : workloads[0];
+      syncSelect(workloadSelect, workloads.map((w) => [w, workloadLabel(w)]), prefs.workload);
+      syncSegmented('dist-class', prefs.cls);
+      syncSegmented('dist-view', prefs.view);
+      bwInput.value = prefs.bw;
+      bwOut.textContent = prefs.bw < 0.005 ? 'raw bins' : `${prefs.bw.toFixed(2)} decade`;
+      document.getElementById('dist-smoothing-group').style.display = prefs.view === 'cdf' ? 'none' : '';
+
+      const configs = data.configs
+        .filter((c) => c.workload === prefs.workload)
+        .map((c) => ({ ...c, style: policyStyle(c.policy), counts: c[prefs.cls] }))
+        .filter((c) => c.counts && c.counts.some((v) => v > 0))
+        .sort((a, b) => a.style.order - b.style.order);
+
+      // legend (toggle buttons)
+      const legend = document.getElementById('dist-legend');
+      legend.innerHTML = configs.map((c) => `
+        <button type="button" data-policy="${escapeHtml(c.policy)}" aria-pressed="${!prefs.hidden.includes(c.policy)}" title="Show/hide">
+          <svg width="26" height="10" aria-hidden="true"><line x1="1" y1="5" x2="25" y2="5" stroke="${c.style.color}" stroke-width="2.5" stroke-dasharray="${c.style.dash}"/></svg>
+          ${escapeHtml(c.style.label)}
+        </button>`).join('');
+      legend.querySelectorAll('button').forEach((button) => button.addEventListener('click', () => {
+        const policy = button.dataset.policy;
+        prefs.hidden = prefs.hidden.includes(policy) ? prefs.hidden.filter((p) => p !== policy) : [...prefs.hidden, policy];
+        savePrefs();
+        renderDistribution();
+      }));
+
+      const bins = data.bins;
+      const series = configs.map((c) => ({ ...c, s: computeSeries(c.counts, bins, prefs.view, prefs.bw) }))
+        .filter((c) => c.s);
+      const shown = series.filter((c) => !prefs.hidden.includes(c.policy));
+      drawChart(chart, bins, series, shown);
+
+      const runs = [...new Set(configs.map((c) => c.runs))].join('/');
+      const clamped = series.filter((c) => c.counts[0] || c.counts[c.counts.length - 1]);
+      const clampNote = clamped.length
+        ? ` Note: ${clamped.map((c) => c.style.label).join(', ')} ha${clamped.length > 1 ? 've' : 's'} samples outside ${fmtMs(10 ** bins.log10_ms_min)}–${fmtMs(10 ** bins.log10_ms_max)} ms, folded into the edge bins.`
+        : '';
+      const className = prefs.cls === 'vo' ? 'Voice (alert age, voEndToEndDelay)' : 'Best Effort (beEndToEndDelay)';
+      document.getElementById('dist-caption').textContent =
+        `${className} · ${data.density} · ${prefs.workload} · ${runs} seed(s) pooled per policy · log delay axis. ` +
+        (prefs.view === 'cdf'
+          ? 'CDF from 0.02-decade bins.'
+          : `Density per decade of delay; ${prefs.bw < 0.005 ? 'raw 0.02-decade bins' : `Gaussian kernel (${prefs.bw.toFixed(2)} decade) over 0.02-decade bins`} — peak heights depend on smoothing.`) + clampNote;
+
+      // stats table
+      const statRows = series.map((c) => {
+        const total = c.s.total;
+        return `<tr>
+          <td><svg class="swatch" width="18" height="8" aria-hidden="true"><line x1="0" y1="4" x2="18" y2="4" stroke="${c.style.color}" stroke-width="2.5" stroke-dasharray="${c.style.dash}"/></svg> ${escapeHtml(c.style.label)}</td>
+          <td>${escapeHtml(c.config)}</td>
+          <td class="num">${c.runs}</td>
+          <td class="num">${total.toLocaleString('pt-BR')}</td>
+          <td class="num">${fmtMs(binnedQuantile(c.counts, bins, 0.5))}</td>
+          <td class="num">${fmtMs(binnedQuantile(c.counts, bins, 0.95))}</td>
+          <td class="num">${fmtMs(binnedQuantile(c.counts, bins, 0.99))}</td>
+        </tr>`;
+      }).join('');
+      document.getElementById('dist-stats').innerHTML = `
+        <div class="table-wrap"><table>
+          <thead><tr><th>Policy</th><th>Config</th><th class="num">Runs</th><th class="num">Samples</th>
+          <th class="num">≈ Median (ms)</th><th class="num">≈ P95 (ms)</th><th class="num">≈ P99 (ms)</th></tr></thead>
+          <tbody>${statRows}</tbody>
+        </table></div>
+        <p class="caption">Quantiles here are pooled over seeds and read from the binned histogram (≈, within one 0.02-decade bin). The tables below report exact per-run P95 averaged over seeds, so values can differ slightly.</p>`;
+    }
+
+    function drawChart(container, bins, series, shown) {
+      const { prefs } = dist;
+      const width = Math.max(320, container.clientWidth || 800);
+      const height = width < 600 ? 300 : 380;
+      const m = { l: 58, r: 16, t: 14, b: 46 };
+      const iw = width - m.l - m.r;
+      const ih = height - m.t - m.b;
+
+      // x domain: data extent across all series (hidden included, so toggling doesn't rescale x)
+      let lo = Infinity;
+      let hi = -Infinity;
+      const w = (bins.log10_ms_max - bins.log10_ms_min) / bins.count;
+      for (const c of series) {
+        c.counts.forEach((v, i) => {
+          if (v) {
+            lo = Math.min(lo, bins.log10_ms_min + i * w);
+            hi = Math.max(hi, bins.log10_ms_min + (i + 1) * w);
+          }
+        });
+      }
+      lo = Math.max(bins.log10_ms_min, lo - 0.15);
+      hi = Math.min(bins.log10_ms_max, hi + 0.15);
+      const ymaxData = prefs.view === 'cdf' ? 1 : Math.max(1e-9, ...shown.flatMap((c) => c.s.ys.filter((_, i) => c.s.xs[i] >= lo && c.s.xs[i] <= hi)));
+      const yTicks = prefs.view === 'cdf' ? [0, 0.25, 0.5, 0.75, 1] : niceLinearTicks(ymaxData * 1.05);
+      const ymax = yTicks[yTicks.length - 1];
+      const X = (v) => m.l + ((v - lo) / (hi - lo)) * iw;
+      const Y = (v) => m.t + ih - (v / ymax) * ih;
+
+      const xTicks = niceLogTicks(lo, hi);
+      const grid = [
+        ...yTicks.map((t) => `<line class="gridline" x1="${m.l}" x2="${m.l + iw}" y1="${Y(t)}" y2="${Y(t)}"/>`),
+        ...xTicks.map((t) => `<line class="gridline" x1="${X(t)}" x2="${X(t)}" y1="${m.t}" y2="${m.t + ih}"/>`),
+      ].join('');
+      const xLabels = xTicks.map((t) => `<text x="${X(t)}" y="${m.t + ih + 18}" text-anchor="middle">${+(10 ** t).toPrecision(2)}</text>`).join('');
+      const yLabels = yTicks.map((t) => `<text x="${m.l - 8}" y="${Y(t) + 4}" text-anchor="end">${prefs.view === 'cdf' ? Math.round(t * 100) + '%' : +t.toFixed(3)}</text>`).join('');
+      const paths = shown.map((c) => {
+        const pts = [];
+        c.s.xs.forEach((x, i) => { if (x >= lo - w && x <= hi + w) pts.push(`${X(Math.min(Math.max(x, lo), hi)).toFixed(1)},${Y(c.s.ys[i]).toFixed(1)}`); });
+        return `<polyline class="series" points="${pts.join(' ')}" stroke="${c.style.color}" stroke-dasharray="${c.style.dash}"/>`;
+      }).join('');
+
+      container.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Delay ${prefs.view} by policy">
+          ${grid}
+          <line class="baseline" x1="${m.l}" x2="${m.l + iw}" y1="${m.t + ih}" y2="${m.t + ih}"/>
+          <g class="axis">${xLabels}${yLabels}</g>
+          <text class="axis-title" x="${m.l + iw / 2}" y="${height - 6}" text-anchor="middle">${prefs.cls === 'vo' ? 'Voice' : 'Best Effort'} delay (ms, log scale)</text>
+          <text class="axis-title" transform="translate(14 ${m.t + ih / 2}) rotate(-90)" text-anchor="middle">${prefs.view === 'cdf' ? 'Cumulative share of packets' : 'Density (per decade)'}</text>
+          <g>${paths}</g>
+          <g class="hover-layer" style="display:none">
+            <line class="crosshair" y1="${m.t}" y2="${m.t + ih}"/>
+            <g class="dots"></g>
+          </g>
+          <rect class="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/>
+        </svg>
+        <div class="tooltip"></div>`;
+
+      const svg = container.querySelector('svg');
+      const hit = container.querySelector('.hit');
+      const layer = container.querySelector('.hover-layer');
+      const cross = container.querySelector('.crosshair');
+      const dots = container.querySelector('.dots');
+      const tip = container.querySelector('.tooltip');
+
+      function valueAt(c, xv) {
+        const xs = c.s.xs;
+        let a = 0;
+        let b = xs.length - 1;
+        while (b - a > 1) { const mid = (a + b) >> 1; if (xs[mid] <= xv) a = mid; else b = mid; }
+        if (prefs.view === 'cdf') return c.s.ys[a];
+        const span = xs[b] - xs[a];
+        const t = span > 0 ? Math.min(1, Math.max(0, (xv - xs[a]) / span)) : 0;
+        return c.s.ys[a] + (c.s.ys[b] - c.s.ys[a]) * t;
+      }
+
+      function onMove(event) {
+        if (!shown.length) return;
+        const rect = svg.getBoundingClientRect();
+        const scale = width / rect.width;
+        const px = (event.clientX - rect.left) * scale;
+        const xv = lo + ((px - m.l) / iw) * (hi - lo);
+        if (xv < lo || xv > hi) { onLeave(); return; }
+        layer.style.display = '';
+        cross.setAttribute('x1', px);
+        cross.setAttribute('x2', px);
+        const values = shown.map((c) => ({ c, v: valueAt(c, xv) }));
+        dots.innerHTML = values.map(({ c, v }) =>
+          `<circle class="dot" cx="${px}" cy="${Y(Math.min(v, ymax))}" r="4" fill="${c.style.color}"/>`).join('');
+        const fmt = (v) => prefs.view === 'cdf' ? (v * 100).toFixed(1) + '%' : v.toFixed(3);
+        tip.innerHTML = `<div class="tt-head">${fmtMs(10 ** xv)} ms</div>` + values
+          .slice().sort((a, b) => b.v - a.v)
+          .map(({ c, v }) => `<div class="tt-row"><svg width="18" height="8" aria-hidden="true"><line x1="0" y1="4" x2="18" y2="4" stroke="${c.style.color}" stroke-width="2.5" stroke-dasharray="${c.style.dash}"/></svg><span>${escapeHtml(c.style.label)}</span><span>${fmt(v)}</span></div>`)
+          .join('');
+        tip.style.display = 'block';
+        const cx = px / scale;
+        const tw = tip.offsetWidth;
+        const left = cx + 14 + tw > rect.width ? cx - 14 - tw : cx + 14;
+        tip.style.left = `${Math.max(0, left)}px`;
+        tip.style.top = `${m.t / scale + 6}px`;
+      }
+      function onLeave() {
+        layer.style.display = 'none';
+        tip.style.display = 'none';
+      }
+      hit.addEventListener('pointermove', onMove);
+      hit.addEventListener('pointerleave', onLeave);
+    }
+
+    let resizeTimer = null;
+    new ResizeObserver(() => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => { if (dist.data) renderDistribution(); }, 120);
+    }).observe(document.getElementById('dist-chart'));
+
+    // ---------- nav highlight ----------
+    const navLinks = [...document.querySelectorAll('#nav a')];
+    function updateActiveNav() {
+      let active = navLinks[0];
+      for (const link of navLinks) {
+        const el = document.querySelector(link.getAttribute('href'));
+        if (el && el.offsetParent !== null && el.getBoundingClientRect().top <= 90) active = link;
+      }
+      navLinks.forEach((link) => link.classList.toggle('active', link === active));
+    }
+    window.addEventListener('scroll', updateActiveNav, { passive: true });
+    updateActiveNav();
+
+    // ---------- load ----------
+    async function loadDashboard() {
+      const params = new URLSearchParams();
+      if (lastDensity) params.set('density', lastDensity);
+      if (lastBaseline) params.set('baseline', lastBaseline);
+      const response = await fetch(`/api/dashboard?${params.toString()}`, { cache: 'no-store' });
+      const data = await response.json();
+      renderStatus(data);
+      lastDensity = syncSelect(density, (data.density_options || []).map((o) => [o.id, o.label]), data.density || lastDensity);
+      lastBaseline = syncSelect(baseline, (data.baseline_options || []).map((o) => [o, o]), data.baseline || lastBaseline);
+      renderTable('comparison', data.comparison);
+      renderTable('config_summary', data.config_summary);
+      renderTable('run_details', data.run_details);
+      renderTable('v2x_matrix', data.v2x_matrix);
+      const hasV2x = data.v2x_matrix && data.v2x_matrix.rows && data.v2x_matrix.rows.length;
+      document.getElementById('v2x-section').style.display = hasV2x ? '' : 'none';
+      document.querySelector('#nav a[href="#v2x-section"]').style.display = hasV2x ? '' : 'none';
+      loadDistributions(data.density).catch((error) => {
+        document.getElementById('dist-chart').innerHTML = `<div class="empty">Failed to load distributions: ${escapeHtml(error)}</div>`;
+      });
+      if (data.rebuild && data.rebuild.running) window.setTimeout(loadDashboard, 5000);
+    }
+
+    loadDashboard().catch((error) => {
+      document.getElementById('status').textContent = `Failed to load dashboard: ${error}`;
+    });
+  </script>
+</body>
+</html>

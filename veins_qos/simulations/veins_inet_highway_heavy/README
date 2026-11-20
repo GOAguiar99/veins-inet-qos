@@ -19,7 +19,7 @@ cd veins/bin && ./veins_launchd -vv
 
 ```bash
 cd veins_qos/simulations/veins_inet_highway_heavy
-RUNS=0..4 EXTRA_ARGS="--repeat=5" ./run_matrix.sh
+PROFILE=full RUNS=0..2 EXTRA_ARGS="--repeat=3" ./run_matrix.sh
 ```
 
 ## Experiment Matrix

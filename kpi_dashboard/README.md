@@ -58,7 +58,22 @@ The figure exporter accepts **multiple** `--results` paths in one command.
 
 ## Outputs
 
+### Delay distribution (interactive)
+
+Per-packet end-to-end delay distribution by MAC policy, read from the `.vec` traces
+(`voEndToEndDelay` / `beEndToEndDelay` on `node[*].app[0]`, the same samples behind the P95 columns).
+
+- Pick a **workload** (`netload_*` uniform, `hotspot_*`, legacy `multivo_*`), the **traffic class** (Voice / Best Effort) and the **view** (density or CDF).
+- Delay axis is log scale. Seeds are pooled by summing per-run histograms (0.02-decade bins from 0.01 ms to 100 s; Best Effort under hotspot load reaches ~13 s).
+- Density view: Gaussian kernel over the bins with an adjustable bandwidth (0 = raw bins). Peak heights depend on that bandwidth.
+- Hover shows each policy's value at the cursor; legend entries toggle series. Policy colours and dashes match the publication figures.
+- The stats table lists pooled median / P95 / P99 read from the bins (approximate, within one bin). Exact per-run P95 stays in the tables.
+
+API: `GET /api/distributions?density=<id>` returns the pooled bins per config.
+
 ### Interactive tables
+
+Every table can be filtered (text match on string columns), sorted by clicking a header, and copied as TSV (visible rows only).
 
 - **Comparison vs Baseline** — deltas vs selected baseline (high-load configs preferred)
 - **Config Summary** — arithmetic mean per config over runs
@@ -105,11 +120,14 @@ See [`SCIENTIFIC_DASHBOARD.md`](SCIENTIFIC_DASHBOARD.md) for figure rationale.
 
 | File | Role |
 |------|------|
-| `meta.json` | `schema_version`, `parser_version` (`rust-kpi-dashboard-0.2.0`), file signatures |
+| `meta.json` | `schema_version` (4), `parser_version` (`rust-kpi-dashboard-0.2.1`), file signatures |
 | `run_rows.json` | Per-run metrics |
 | `config_summary.json` | Per-config means |
+| `delay_histograms.json` | Per-run log-binned VO/BE delay counts (schema 4+) |
 
 Cache invalidates when parser version, schema, or source file name/size/mtime changes.
+
+**Offline mode:** if a results directory has a valid cache but no reachable `.sca`/`.vec` files (archive drive unplugged, dangling symlinks), the dashboard serves the cache as `cache (raw offline)` with a warning instead of failing. A rebuild still needs the traces.
 
 **Note:** `export_figures` uses a valid `.kpi_cache_rs` when present; otherwise it rebuilds from raw `.sca`/`.vec` and refreshes the cache. Pass `--summary-json` to merge archived `config_summary.json` rows (needed for hotspot cross-regime figures without local `.sca`).
 

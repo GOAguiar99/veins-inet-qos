@@ -37,7 +37,7 @@ echo
 if ! nc -z "$TRACI_HOST" "$TRACI_PORT" >/dev/null 2>&1; then
     echo "TraCI server is not reachable at $TRACI_HOST:$TRACI_PORT." >&2
     echo "Start veins_launchd first, for example:" >&2
-    echo "  cd /home/goaguiar/master/master_veins/veins/bin" >&2
+    echo "  cd ../../../veins/bin" >&2
     echo "  ./veins_launchd -vv" >&2
     exit 1
 fi

@@ -27,11 +27,11 @@ cd veins_qos/simulations/veins_inet_highway_light
 | Profile | Configs | Default `RUNS` |
 |---------|---------|----------------|
 | `core` | 5 × high-load (all MAC policies) | `0` |
-| `full` | 15 × (5 policies × 3 loads) | `0` |
+| `full` (paper matrix) | 15 × (5 policies × 3 loads) | `0..4` (5 seeds) |
 | `quick` | plain + guarded high-load | `0` |
 
 ```bash
-PROFILE=full RUNS=0..9 EXTRA_ARGS="--repeat=10" ./run_matrix.sh
+PROFILE=full RUNS=0..4 EXTRA_ARGS="--repeat=5" ./run_matrix.sh
 ```
 
 ### Runnable configs
