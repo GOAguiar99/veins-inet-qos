@@ -10,8 +10,9 @@ use axum::routing::get;
 use axum::{Json, Router};
 use clap::Parser;
 use kpi_dashboard::{
-    build_dashboard_response, discover_results_packages, load_startup_dataset, DashboardDataset,
-    DashboardResponse, DensityOption, RebuildStatus, INDEX_HTML,
+    build_dashboard_response, build_distribution_response, discover_results_packages,
+    load_startup_dataset, DashboardDataset, DashboardResponse, DensityOption,
+    DistributionResponse, RebuildStatus, INDEX_HTML,
 };
 use serde::Deserialize;
 
@@ -116,6 +117,7 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/", get(index))
         .route("/api/dashboard", get(api_dashboard))
+        .route("/api/distributions", get(api_distributions))
         .with_state(Arc::new(state));
     axum::serve(listener, app).await?;
     Ok(())
@@ -172,6 +174,23 @@ async fn api_dashboard(
         &baseline,
         rebuild,
     ))
+}
+
+async fn api_distributions(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<DashboardQuery>,
+) -> Json<DistributionResponse> {
+    let density = query
+        .density
+        .filter(|value| state.datasets.contains_key(value))
+        .unwrap_or_else(|| state.default_density.clone());
+    let dataset = state
+        .datasets
+        .get(&density)
+        .expect("density validated above")
+        .read()
+        .expect("dataset lock poisoned");
+    Json(build_distribution_response(&dataset, &density))
 }
 
 trait ResolvePath {

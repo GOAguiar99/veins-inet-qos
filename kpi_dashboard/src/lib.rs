@@ -11,11 +11,18 @@ use serde_json::Value;
 
 pub mod figures;
 
-const CACHE_SCHEMA_VERSION: u32 = 3;
+const CACHE_SCHEMA_VERSION: u32 = 4;
 const PARSER_VERSION: &str = "rust-kpi-dashboard-0.2.1";
 const CACHE_DIR_NAME: &str = ".kpi_cache_rs";
 const AC_INDEX_BE: u8 = 1;
 const AC_INDEX_VO: u8 = 3;
+
+/// Per-run delay histograms use fixed log-spaced bins so seeds can be pooled by
+/// summing counts. Bin i covers 10^(MIN + i*w) .. 10^(MIN + (i+1)*w) ms, w = 0.02 decade.
+/// Samples below/above the range are clamped into the first/last bin.
+pub const HIST_LOG10_MS_MIN: f64 = -2.0;
+pub const HIST_LOG10_MS_MAX: f64 = 5.0;
+pub const HIST_BINS: usize = 350;
 
 macro_rules! define_metrics {
     ($($field:ident),+ $(,)?) => {
@@ -108,6 +115,15 @@ pub struct RunRow {
     pub metrics: NumericMetrics,
 }
 
+/// Log-binned per-packet delay counts for one run (see `HIST_*` constants).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RunDelayHistogram {
+    pub config: String,
+    pub run: String,
+    pub vo: Vec<u32>,
+    pub be: Vec<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigSummary {
     pub config: String,
@@ -151,6 +167,8 @@ pub struct CacheInfo {
 pub struct DashboardDataset {
     pub run_rows: Vec<RunRow>,
     pub config_summary: Vec<ConfigSummary>,
+    #[serde(default)]
+    pub delay_histograms: Vec<RunDelayHistogram>,
     pub cache_info: CacheInfo,
     pub warnings: Vec<String>,
 }
@@ -224,6 +242,31 @@ pub struct DashboardResponse {
     pub v2x_matrix: Table<BTreeMap<String, Value>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistogramBins {
+    pub log10_ms_min: f64,
+    pub log10_ms_max: f64,
+    pub count: usize,
+}
+
+/// Seeds pooled per config: histogram counts are summed over runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigDistribution {
+    pub config: String,
+    pub policy: String,
+    pub workload: String,
+    pub runs: usize,
+    pub vo: Vec<u64>,
+    pub be: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DistributionResponse {
+    pub density: String,
+    pub bins: HistogramBins,
+    pub configs: Vec<ConfigDistribution>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ResultsPackage {
     pub id: String,
@@ -268,6 +311,8 @@ struct VecMetrics {
     be_samples: usize,
     vo_samples: usize,
     be_from_crash_samples: usize,
+    be_hist: Vec<u32>,
+    vo_hist: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -387,15 +432,23 @@ pub fn load_startup_dataset(
 }
 
 pub fn rebuild_raw_dataset(results_dir: &Path, threads: Option<usize>) -> Result<DashboardDataset> {
-    let (run_rows, warnings) = build_run_rows_from_raw(results_dir, threads)?;
+    let (run_rows, delay_histograms, warnings) = build_run_rows_from_raw(results_dir, threads)?;
     let config_summary = build_config_summary(&run_rows);
-    let meta = write_rust_cache(results_dir, &run_rows, &config_summary, "raw", &warnings)?;
+    let meta = write_rust_cache(
+        results_dir,
+        &run_rows,
+        &config_summary,
+        &delay_histograms,
+        "raw",
+        &warnings,
+    )?;
     Ok(dataset_from_parts(
         results_dir,
         "cache rebuilt",
         meta,
         run_rows,
         config_summary,
+        delay_histograms,
         warnings,
     ))
 }
@@ -453,28 +506,54 @@ pub fn try_load_valid_rust_cache(results_dir: &Path) -> Result<Option<DashboardD
     let meta_path = rust_cache_dir(results_dir).join("meta.json");
     let run_rows_path = rust_cache_dir(results_dir).join("run_rows.json");
     let config_summary_path = rust_cache_dir(results_dir).join("config_summary.json");
-    if !meta_path.exists() || !run_rows_path.exists() || !config_summary_path.exists() {
+    let histograms_path = rust_cache_dir(results_dir).join("delay_histograms.json");
+    if !meta_path.exists()
+        || !run_rows_path.exists()
+        || !config_summary_path.exists()
+        || !histograms_path.exists()
+    {
         return Ok(None);
     }
 
     let meta: CacheMeta = read_json(&meta_path)?;
-    if meta.schema_version != CACHE_SCHEMA_VERSION
-        || meta.parser_version != PARSER_VERSION
-        || meta.source_files != source_signatures(results_dir)?
-    {
+    if meta.schema_version != CACHE_SCHEMA_VERSION || meta.parser_version != PARSER_VERSION {
+        return Ok(None);
+    }
+    // When no raw traces are reachable (archive drive unplugged, dangling symlinks),
+    // serve the last valid cache instead of failing on a rebuild.
+    let current_sources = source_signatures(results_dir)?;
+    let raw_offline = current_sources.is_empty();
+    if !raw_offline && meta.source_files != current_sources {
         return Ok(None);
     }
 
     let run_rows: Vec<RunRow> = read_json(&run_rows_path)?;
     let config_summary: Vec<ConfigSummary> = read_json(&config_summary_path)?;
-    let warnings = meta.warnings.clone();
+    let delay_histograms: Vec<RunDelayHistogram> = read_json(&histograms_path)?;
+    // A cache written with a different bin layout is stale even if the schema matches.
+    let layout_ok = delay_histograms.iter().all(|histogram| {
+        [&histogram.vo, &histogram.be]
+            .iter()
+            .all(|counts| counts.is_empty() || counts.len() == HIST_BINS)
+    });
+    if !layout_ok {
+        return Ok(None);
+    }
+    let mut warnings = meta.warnings.clone();
+    if raw_offline {
+        warnings.push(format!(
+            "Raw .sca/.vec files are not reachable in {}; serving the cached KPIs without validating them against the traces.",
+            results_dir.display()
+        ));
+    }
 
     Ok(Some(dataset_from_parts(
         results_dir,
-        "cache hit",
+        if raw_offline { "cache (raw offline)" } else { "cache hit" },
         meta,
         run_rows,
         config_summary,
+        delay_histograms,
         warnings,
     )))
 }
@@ -482,7 +561,7 @@ pub fn try_load_valid_rust_cache(results_dir: &Path) -> Result<Option<DashboardD
 fn build_run_rows_from_raw(
     results_dir: &Path,
     threads: Option<usize>,
-) -> Result<(Vec<RunRow>, Vec<String>)> {
+) -> Result<(Vec<RunRow>, Vec<RunDelayHistogram>, Vec<String>)> {
     if !results_dir.exists() {
         return Err(anyhow!(
             "results directory not found: {}",
@@ -496,7 +575,7 @@ fn build_run_rows_from_raw(
     }
     sca_files.sort();
 
-    let parse_all = || -> Result<Vec<(RunRow, RunParseWarnings)>> {
+    let parse_all = || -> Result<Vec<(RunRow, RunDelayHistogram, RunParseWarnings)>> {
         sca_files
             .par_iter()
             .map(|path| parse_run_results(path))
@@ -514,16 +593,21 @@ fn build_run_rows_from_raw(
     };
 
     let mut rows = Vec::with_capacity(parsed.len());
+    let mut histograms = Vec::with_capacity(parsed.len());
     let mut warnings = Vec::new();
-    for (row, row_warnings) in parsed {
+    for (row, histogram, row_warnings) in parsed {
         rows.push(row);
+        histograms.push(histogram);
         warnings.extend(row_warnings.messages);
     }
     rows.sort_by(compare_run_row_values);
-    Ok((rows, cap_warnings(warnings)))
+    histograms.sort_by(|left, right| {
+        compare_configs(&left.config, &right.config).then_with(|| left.run.cmp(&right.run))
+    });
+    Ok((rows, histograms, cap_warnings(warnings)))
 }
 
-fn parse_run_results(sca_path: &Path) -> Result<(RunRow, RunParseWarnings)> {
+fn parse_run_results(sca_path: &Path) -> Result<(RunRow, RunDelayHistogram, RunParseWarnings)> {
     let mut warnings = RunParseWarnings::default();
     let vec_path = sca_path.with_extension("vec");
     let vec_metrics = if vec_path.exists() {
@@ -549,7 +633,14 @@ fn parse_run_results(sca_path: &Path) -> Result<(RunRow, RunParseWarnings)> {
         ));
     }
 
-    Ok((parse_sca_file(sca_path, &vec_metrics)?, warnings))
+    let row = parse_sca_file(sca_path, &vec_metrics)?;
+    let histogram = RunDelayHistogram {
+        config: row.config.clone(),
+        run: row.run.clone(),
+        vo: vec_metrics.vo_hist.clone(),
+        be: vec_metrics.be_hist.clone(),
+    };
+    Ok((row, histogram, warnings))
 }
 
 fn parse_vec_metrics(path: &Path) -> Result<VecMetrics> {
@@ -644,6 +735,8 @@ fn parse_vec_metrics(path: &Path) -> Result<VecMetrics> {
         }
     }
 
+    metrics.be_hist = delay_histogram(&be_values);
+    metrics.vo_hist = delay_histogram(&vo_values);
     metrics.be_delay_p95_s = percentile(&mut be_values, 0.95);
     metrics.vo_delay_p95_s = percentile(&mut vo_values, 0.95);
     metrics.be_from_crash_delay_p95_s = percentile(&mut be_from_crash_values, 0.95);
@@ -1506,6 +1599,7 @@ fn write_rust_cache(
     results_dir: &Path,
     run_rows: &[RunRow],
     config_summary: &[ConfigSummary],
+    delay_histograms: &[RunDelayHistogram],
     source_kind: &str,
     warnings: &[String],
 ) -> Result<CacheMeta> {
@@ -1513,6 +1607,7 @@ fn write_rust_cache(
     fs::create_dir_all(&cache_dir)?;
     write_json(&cache_dir.join("run_rows.json"), run_rows)?;
     write_json(&cache_dir.join("config_summary.json"), config_summary)?;
+    write_json_compact(&cache_dir.join("delay_histograms.json"), delay_histograms)?;
     let meta = CacheMeta {
         schema_version: CACHE_SCHEMA_VERSION,
         parser_version: PARSER_VERSION.to_string(),
@@ -1533,11 +1628,13 @@ fn dataset_from_parts(
     meta: CacheMeta,
     run_rows: Vec<RunRow>,
     config_summary: Vec<ConfigSummary>,
+    delay_histograms: Vec<RunDelayHistogram>,
     warnings: Vec<String>,
 ) -> DashboardDataset {
     DashboardDataset {
         run_rows,
         config_summary,
+        delay_histograms,
         cache_info: CacheInfo {
             results_dir: results_dir.display().to_string(),
             cache_dir: rust_cache_dir(results_dir).display().to_string(),
@@ -1607,6 +1704,88 @@ fn write_json<T: Serialize + ?Sized>(path: &Path, payload: &T) -> Result<()> {
     let file = File::create(path)?;
     serde_json::to_writer_pretty(file, payload)?;
     Ok(())
+}
+
+fn write_json_compact<T: Serialize + ?Sized>(path: &Path, payload: &T) -> Result<()> {
+    let file = File::create(path)?;
+    serde_json::to_writer(file, payload)?;
+    Ok(())
+}
+
+/// Bin delay samples (seconds) into the fixed log10(ms) grid.
+fn delay_histogram(values_s: &[f64]) -> Vec<u32> {
+    if values_s.is_empty() {
+        return Vec::new();
+    }
+    let width = (HIST_LOG10_MS_MAX - HIST_LOG10_MS_MIN) / HIST_BINS as f64;
+    let mut counts = vec![0u32; HIST_BINS];
+    for &value in values_s {
+        let index = if value > 0.0 {
+            let position = ((value * 1000.0).log10() - HIST_LOG10_MS_MIN) / width;
+            position.floor().clamp(0.0, (HIST_BINS - 1) as f64) as usize
+        } else {
+            0
+        };
+        counts[index] += 1;
+    }
+    counts
+}
+
+/// Split `<policy>_<workload>` config names, e.g. `edca_v2x_vo_stable_hotspot_high`
+/// -> (`edca_v2x_vo_stable`, `hotspot_high`). Legacy `_pb_` variants keep `_pb` in the policy.
+pub fn split_policy_workload(config: &str) -> (String, String) {
+    const POLICIES: [&str; 5] = [
+        "edca_v2x_vo_emergency",
+        "edca_v2x_vo_guarded",
+        "edca_v2x_vo_stable",
+        "edca_only",
+        "plain",
+    ];
+    for policy in POLICIES {
+        if let Some(rest) = config.strip_prefix(policy).and_then(|rest| rest.strip_prefix('_')) {
+            if let Some(workload) = rest.strip_prefix("pb_") {
+                return (format!("{policy}_pb"), workload.to_string());
+            }
+            return (policy.to_string(), rest.to_string());
+        }
+    }
+    (config.to_string(), String::new())
+}
+
+pub fn build_distribution_response(dataset: &DashboardDataset, density: &str) -> DistributionResponse {
+    let mut by_config: BTreeMap<String, ConfigDistribution> = BTreeMap::new();
+    for histogram in &dataset.delay_histograms {
+        let entry = by_config
+            .entry(histogram.config.clone())
+            .or_insert_with(|| {
+                let (policy, workload) = split_policy_workload(&histogram.config);
+                ConfigDistribution {
+                    config: histogram.config.clone(),
+                    policy,
+                    workload,
+                    runs: 0,
+                    vo: vec![0; HIST_BINS],
+                    be: vec![0; HIST_BINS],
+                }
+            });
+        entry.runs += 1;
+        for (target, source) in [(&mut entry.vo, &histogram.vo), (&mut entry.be, &histogram.be)] {
+            for (bin, count) in target.iter_mut().zip(source.iter()) {
+                *bin += u64::from(*count);
+            }
+        }
+    }
+    let mut configs: Vec<ConfigDistribution> = by_config.into_values().collect();
+    configs.sort_by(|left, right| compare_configs(&left.config, &right.config));
+    DistributionResponse {
+        density: density.to_string(),
+        bins: HistogramBins {
+            log10_ms_min: HIST_LOG10_MS_MIN,
+            log10_ms_max: HIST_LOG10_MS_MAX,
+            count: HIST_BINS,
+        },
+        configs,
+    }
 }
 
 fn unix_now_secs() -> u64 {
@@ -2221,358 +2400,7 @@ fn path_file_stem(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-pub const INDEX_HTML: &str = r#"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Veins QoS KPI Tables</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --ink: #16202a;
-      --muted: #5c6670;
-      --line: #d7dde4;
-      --panel: #f7f9fb;
-      --accent: #0f766e;
-      --warn: #9a3412;
-      --warn-bg: #fff7ed;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      color: var(--ink);
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #ffffff;
-    }
-    main {
-      width: min(1600px, calc(100vw - 32px));
-      margin: 0 auto;
-      padding: 18px 0 28px;
-    }
-    header {
-      display: flex;
-      align-items: end;
-      justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 14px;
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 12px;
-    }
-    h1 {
-      margin: 0;
-      font-size: 24px;
-      letter-spacing: 0;
-      line-height: 1.2;
-    }
-    h2 {
-      margin: 22px 0 8px;
-      font-size: 17px;
-      letter-spacing: 0;
-    }
-    .controls {
-      display: flex;
-      align-items: end;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    label {
-      display: grid;
-      gap: 4px;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 650;
-    }
-    select, button {
-      height: 36px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fff;
-      color: var(--ink);
-      font: inherit;
-      font-size: 14px;
-      padding: 0 10px;
-    }
-    button {
-      cursor: pointer;
-      border-color: var(--accent);
-      color: var(--accent);
-      font-weight: 700;
-    }
-    .status {
-      display: grid;
-      gap: 4px;
-      padding: 10px 12px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--panel);
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .warnings {
-      margin-top: 10px;
-      display: grid;
-      gap: 6px;
-    }
-    .warning {
-      border: 1px solid #fed7aa;
-      border-radius: 6px;
-      background: var(--warn-bg);
-      color: var(--warn);
-      padding: 8px 10px;
-      font-size: 13px;
-    }
-    .table-wrap {
-      overflow: auto;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-    }
-    .table-tools {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-bottom: 8px;
-    }
-    .copy-status {
-      color: var(--muted);
-      font-size: 12px;
-      min-width: 56px;
-      text-align: right;
-    }
-    table {
-      width: 100%;
-      min-width: 980px;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-    th, td {
-      border-bottom: 1px solid var(--line);
-      padding: 7px 8px;
-      text-align: left;
-      vertical-align: top;
-      white-space: nowrap;
-    }
-    th {
-      position: sticky;
-      top: 0;
-      z-index: 1;
-      background: #eef3f7;
-      font-size: 12px;
-      color: #25313d;
-    }
-    tbody tr:nth-child(even) td { background: #fbfcfd; }
-    td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    .empty {
-      color: var(--muted);
-      padding: 16px 0;
-      font-size: 13px;
-    }
-    @media (max-width: 720px) {
-      main { width: min(100vw - 20px, 1600px); }
-      header { align-items: stretch; }
-      h1 { font-size: 20px; }
-      .controls { width: 100%; }
-      label, select, button { width: 100%; }
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <header>
-      <h1>Veins QoS KPI Tables</h1>
-      <div class="controls">
-        <label>Scenario
-          <select id="density"></select>
-        </label>
-        <label>Baseline
-          <select id="baseline"></select>
-        </label>
-        <button id="reload" type="button">Reload</button>
-      </div>
-    </header>
-    <section id="status" class="status"></section>
-    <section id="warnings" class="warnings"></section>
-    <section>
-      <h2>Comparison vs Baseline</h2>
-      <div id="comparison"></div>
-    </section>
-    <section>
-      <h2>Config Summary</h2>
-      <div id="config_summary"></div>
-    </section>
-    <section>
-      <h2>Run Details</h2>
-      <div id="run_details"></div>
-    </section>
-    <section id="v2x-section">
-      <h2>V2X Mode Matrix</h2>
-      <div id="v2x_matrix"></div>
-    </section>
-  </main>
-  <script>
-    const density = document.getElementById('density');
-    const baseline = document.getElementById('baseline');
-    const reloadButton = document.getElementById('reload');
-    const nf = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 3 });
-    let lastDensity = '';
-    let lastBaseline = '';
-
-    reloadButton.addEventListener('click', loadDashboard);
-    density.addEventListener('change', () => {
-      lastDensity = density.value;
-      loadDashboard();
-    });
-    baseline.addEventListener('change', () => {
-      lastBaseline = baseline.value;
-      loadDashboard();
-    });
-
-    function renderStatus(data) {
-      const info = data.cache_info;
-      const rebuild = data.rebuild.running ? 'rebuilding' : 'ready';
-      document.getElementById('status').innerHTML = `
-        <div><strong>${escapeHtml(info.cache_state)}</strong> · ${escapeHtml(info.source_kind)} · ${rebuild}</div>
-        <div>${escapeHtml(info.run_count)} run(s), ${escapeHtml(info.config_count)} config(s)</div>
-        <div>${escapeHtml(info.results_dir)}</div>
-      `;
-      const warnings = document.getElementById('warnings');
-      warnings.innerHTML = (data.warnings || []).map((warning) =>
-        `<div class="warning">${escapeHtml(warning)}</div>`
-      ).join('');
-    }
-
-    function syncDensityOptions(data) {
-      const selected = data.density || lastDensity || '';
-      density.innerHTML = (data.density_options || []).map((option) => {
-        const isSelected = option.id === selected ? ' selected' : '';
-        return `<option value="${escapeHtml(option.id)}"${isSelected}>${escapeHtml(option.label)}</option>`;
-      }).join('');
-      if (selected && density.value !== selected) density.value = selected;
-      lastDensity = density.value || selected;
-    }
-
-    function syncBaselineOptions(data) {
-      const selected = data.baseline || lastBaseline || '';
-      baseline.innerHTML = (data.baseline_options || []).map((option) => {
-        const isSelected = option === selected ? ' selected' : '';
-        return `<option value="${escapeHtml(option)}"${isSelected}>${escapeHtml(option)}</option>`;
-      }).join('');
-      if (selected && baseline.value !== selected) baseline.value = selected;
-      lastBaseline = baseline.value || selected;
-    }
-
-    function renderTable(targetId, table) {
-      const target = document.getElementById(targetId);
-      if (!table || !table.rows || table.rows.length === 0) {
-        target.innerHTML = '<div class="empty">No rows</div>';
-        return;
-      }
-      const headers = table.columns.map((column) => `<th>${escapeHtml(column.label)}</th>`).join('');
-      const body = table.rows.map((row) => {
-        const cells = table.columns.map((column) => {
-          const value = row[column.id];
-          const isNumber = typeof value === 'number';
-          return `<td class="${isNumber ? 'num' : ''}">${formatValue(value)}</td>`;
-        }).join('');
-        return `<tr>${cells}</tr>`;
-      }).join('');
-      target.innerHTML = `
-        <div class="table-tools">
-          <button type="button" data-copy-table="${escapeHtml(targetId)}">Copy table</button>
-          <span class="copy-status" id="${escapeHtml(targetId)}_copy_status"></span>
-        </div>
-        <div class="table-wrap"><table><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table></div>
-      `;
-      const copyButton = target.querySelector('[data-copy-table]');
-      copyButton.addEventListener('click', () => copyTable(targetId, table));
-    }
-
-    async function copyTable(targetId, table) {
-      const status = document.getElementById(`${targetId}_copy_status`);
-      const text = tableToTsv(table);
-      try {
-        await navigator.clipboard.writeText(text);
-        status.textContent = 'Copied';
-      } catch (_error) {
-        fallbackCopyText(text);
-        status.textContent = 'Copied';
-      }
-      window.setTimeout(() => { status.textContent = ''; }, 1800);
-    }
-
-    function tableToTsv(table) {
-      const header = table.columns.map((column) => tsvCell(column.label)).join('\t');
-      const rows = table.rows.map((row) =>
-        table.columns.map((column) => tsvCell(rawValue(row[column.id]))).join('\t')
-      );
-      return [header, ...rows].join('\n');
-    }
-
-    function rawValue(value) {
-      if (value === null || value === undefined) return 'N/A';
-      if (typeof value === 'number') return nf.format(value);
-      return String(value);
-    }
-
-    function tsvCell(value) {
-      return String(value).replaceAll('\t', ' ').replaceAll('\r', ' ').replaceAll('\n', ' ');
-    }
-
-    function fallbackCopyText(text) {
-      const textarea = document.createElement('textarea');
-      textarea.value = text;
-      textarea.setAttribute('readonly', '');
-      textarea.style.position = 'fixed';
-      textarea.style.left = '-9999px';
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      textarea.remove();
-    }
-
-    function formatValue(value) {
-      if (value === null || value === undefined) return 'N/A';
-      if (typeof value === 'number') return nf.format(value);
-      return escapeHtml(String(value));
-    }
-
-    function escapeHtml(value) {
-      return String(value)
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#039;');
-    }
-
-    async function loadDashboard() {
-      const params = new URLSearchParams();
-      if (lastDensity) params.set('density', lastDensity);
-      if (lastBaseline) params.set('baseline', lastBaseline);
-      const response = await fetch(`/api/dashboard?${params.toString()}`, { cache: 'no-store' });
-      const data = await response.json();
-      renderStatus(data);
-      syncDensityOptions(data);
-      syncBaselineOptions(data);
-      renderTable('comparison', data.comparison);
-      renderTable('config_summary', data.config_summary);
-      renderTable('run_details', data.run_details);
-      renderTable('v2x_matrix', data.v2x_matrix);
-      document.getElementById('v2x-section').style.display =
-        data.v2x_matrix && data.v2x_matrix.rows && data.v2x_matrix.rows.length ? '' : 'none';
-      if (data.rebuild && data.rebuild.running) {
-        window.setTimeout(loadDashboard, 5000);
-      }
-    }
-
-    loadDashboard().catch((error) => {
-      document.getElementById('status').textContent = `Failed to load dashboard: ${error}`;
-    });
-  </script>
-</body>
-</html>
-"#;
+pub const INDEX_HTML: &str = include_str!("index.html");
 
 #[cfg(test)]
 mod tests {
@@ -2603,6 +2431,35 @@ vector 2 Scenario.node[0].app[0] voEndToEndDelay:vector ETV
         assert!((metrics.be_delay_p95_s.unwrap() - 0.0048).abs() < 1e-12);
         assert!((metrics.be_jitter_s.unwrap() - 0.002).abs() < 1e-12);
         assert!((metrics.vo_jitter_s.unwrap() - 0.004).abs() < 1e-12);
+        assert_eq!(metrics.be_hist.iter().sum::<u32>(), 3);
+        assert_eq!(metrics.vo_hist.iter().sum::<u32>(), 2);
+    }
+
+    #[test]
+    fn delay_histogram_bins_log_ms_and_clamps() {
+        // 1 ms -> log10 = 0 -> bin (0 - -2) / 0.02 = 100; 0.256 ms -> bin 70.
+        let counts = delay_histogram(&[0.001, 0.000256, 1e-9, 1000.0, 0.0]);
+        assert_eq!(counts.len(), HIST_BINS);
+        assert_eq!(counts[100], 1);
+        assert_eq!(counts[70], 1);
+        assert_eq!(counts[0], 2);
+        assert_eq!(counts[HIST_BINS - 1], 1);
+    }
+
+    #[test]
+    fn splits_policy_and_workload() {
+        assert_eq!(
+            split_policy_workload("edca_v2x_vo_stable_hotspot_high"),
+            ("edca_v2x_vo_stable".to_string(), "hotspot_high".to_string())
+        );
+        assert_eq!(
+            split_policy_workload("plain_netload_low"),
+            ("plain".to_string(), "netload_low".to_string())
+        );
+        assert_eq!(
+            split_policy_workload("edca_v2x_vo_guarded_pb_multivo_burstgap"),
+            ("edca_v2x_vo_guarded_pb".to_string(), "multivo_burstgap".to_string())
+        );
     }
 
     #[test]
@@ -2721,6 +2578,21 @@ scalar Scenario.node[0].wlan[0].mac packetDrop:count 0
 
         let dataset = rebuild_raw_dataset(results, Some(1)).unwrap();
         assert_eq!(dataset.cache_info.run_count, 1);
+        assert_eq!(dataset.delay_histograms.len(), 1);
+        assert!(try_load_valid_rust_cache(results).unwrap().is_some());
+
+        // A changed trace invalidates the cache ...
+        fs::write(results.join("plain_netload_high-#0.vec"), "changed\n").unwrap();
+        assert!(try_load_valid_rust_cache(results).unwrap().is_none());
+        // ... but with no raw traces at all, the cache is served in offline mode.
+        fs::remove_file(results.join("plain_netload_high-#0.vec")).unwrap();
+        fs::remove_file(results.join("plain_netload_high-#0.sca")).unwrap();
+        let offline = try_load_valid_rust_cache(results).unwrap().unwrap();
+        assert_eq!(offline.cache_info.cache_state, "cache (raw offline)");
+        assert_eq!(offline.delay_histograms.len(), 1);
+        let distribution = build_distribution_response(&dataset, "custom");
+        assert_eq!(distribution.configs.len(), 1);
+        assert_eq!(distribution.configs[0].workload, "netload_high");
         assert_eq!(dataset.cache_info.config_count, 1);
         assert!(dataset
             .warnings
