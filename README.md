@@ -1,6 +1,6 @@
-# Crash-Aware Vehicular QoS Workspace
+# Crash-Aware Vehicular QoS Artifact
 
-**Status:** Active research workspace (master's project)
+**Status:** Paper baseline for *Crash-Aware Traffic Prioritization in Vehicular Wi-Fi* (SBESC 2026). The recorded evaluation uses the highway light (10 vehicles, 5 seeds) and highway heavy (100 vehicles, 3 seeds) packages below. Other scenario folders are legacy and are not used in the paper.
 
 ## Research Question
 
@@ -39,7 +39,7 @@ The implementation deliberately uses a **two-class** model (BE vs crash VO) for 
 
 ## Prerequisites
 
-- OMNeT++ 6.1, INET, Veins (see framework docs in submodule trees)
+- OMNeT++ 6.1, INET 4.5.2, Veins (see framework docs in submodule trees)
 - SUMO via `veins_launchd`
 - Rust toolchain for `kpi_dashboard`
 
@@ -72,11 +72,16 @@ RUNS=0 UI=Cmdenv ./run_matrix.sh
 | `full` | All 15 policy × load combinations |
 | `quick` | Plain + guarded high-load only |
 
-Full sweep with repeated seeds:
+Paper-matching sweeps (do not mix with older `results/` trees):
 
 ```bash
+# Light density: 15 configs, seeds 0..4 (five runs)
 cd veins_qos/simulations/veins_inet_highway_light
-PROFILE=full RUNS=0..9 UI=Cmdenv EXTRA_ARGS="--repeat=10" ./run_matrix.sh
+PROFILE=full RUNS=0..4 UI=Cmdenv EXTRA_ARGS="--repeat=5" ./run_matrix.sh
+
+# Heavy density: 15 configs, seeds 0..2 (three runs)
+cd veins_qos/simulations/veins_inet_highway_heavy
+PROFILE=full RUNS=0..2 UI=Cmdenv EXTRA_ARGS="--repeat=3" ./run_matrix.sh
 ```
 
 **Results hygiene:** Archive or delete old `results/` before mixing incompatible traffic profiles.
