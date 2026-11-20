@@ -614,41 +614,6 @@ pub(crate) fn decimate_sorted(values: &[f64], max_points: usize) -> Vec<f64> {
         .collect()
 }
 
-pub(crate) fn percentile(values: &[f64], ratio: f64) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(f64::total_cmp);
-    let index = ((sorted.len() - 1) as f64 * ratio.clamp(0.0, 1.0)).round() as usize;
-    sorted[index]
-}
-
-pub(crate) fn scatter_axis_bounds(delays: &[f64], jitters: &[f64]) -> (f64, f64, f64, f64) {
-    let max_x = delays.iter().copied().fold(0.0, f64::max);
-    let max_y = jitters.iter().copied().fold(0.0, f64::max);
-    if delays.is_empty() {
-        return (0.0, max_x.max(1.0), 0.0, max_y.max(1.0));
-    }
-    let threshold_x = max_x * 0.1;
-    let threshold_y = max_y * 0.1;
-    let clustered = delays
-        .iter()
-        .zip(jitters.iter())
-        .filter(|(delay, jitter)| **delay <= threshold_x && **jitter <= threshold_y)
-        .count();
-    let clustered_ratio = clustered as f64 / delays.len() as f64;
-    if clustered_ratio > 0.8 && max_x > 0.0 && max_y > 0.0 {
-        let min_x = (percentile(delays, 0.05) * 0.85).max(0.0);
-        let min_y = (percentile(jitters, 0.05) * 0.85).max(0.0);
-        (min_x, max_x, min_y, max_y)
-    } else {
-        (0.0, max_x, 0.0, max_y)
-    }
-}
-
-
-
 pub(crate) fn workload_label(workload: &str) -> String {
     match workload {
         "low" => "Low".to_string(),

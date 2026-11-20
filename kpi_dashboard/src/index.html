@@ -375,7 +375,7 @@
         ? new Date(info.built_at_unix_secs * 1000).toLocaleString()
         : 'n/a';
       document.getElementById('status').innerHTML = `
-        <span><strong>${escapeHtml(info.cache_state)}</strong> · ${escapeHtml(info.source_kind)} · ${data.rebuild.running ? 'rebuilding' : 'ready'}</span>
+        <span><strong>${escapeHtml(info.cache_state)}</strong> · ${escapeHtml(info.source_kind)}</span>
         <span><strong>${escapeHtml(info.run_count)}</strong> runs · <strong>${escapeHtml(info.config_count)}</strong> configs</span>
         <span>cache built ${escapeHtml(built)}</span>
         <span title="${escapeHtml(info.results_dir)}">${escapeHtml(shortPath(info.results_dir))}</span>
@@ -924,7 +924,6 @@
       loadDistributions(data.density).catch((error) => {
         document.getElementById('dist-chart').innerHTML = `<div class="empty">Failed to load distributions: ${escapeHtml(error)}</div>`;
       });
-      if (data.rebuild && data.rebuild.running) window.setTimeout(loadDashboard, 5000);
     }
 
     loadDashboard().catch((error) => {

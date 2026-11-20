@@ -186,42 +186,6 @@ pub struct Table<T> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RebuildStatus {
-    pub running: bool,
-    pub message: Option<String>,
-}
-
-impl RebuildStatus {
-    pub fn idle() -> Self {
-        Self {
-            running: false,
-            message: None,
-        }
-    }
-
-    pub fn running(message: impl Into<String>) -> Self {
-        Self {
-            running: true,
-            message: Some(message.into()),
-        }
-    }
-
-    pub fn finished(message: impl Into<String>) -> Self {
-        Self {
-            running: false,
-            message: Some(message.into()),
-        }
-    }
-
-    pub fn failed(message: impl Into<String>) -> Self {
-        Self {
-            running: false,
-            message: Some(message.into()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DensityOption {
     pub id: String,
     pub label: String,
@@ -231,7 +195,6 @@ pub struct DensityOption {
 pub struct DashboardResponse {
     pub cache_info: CacheInfo,
     pub warnings: Vec<String>,
-    pub rebuild: RebuildStatus,
     pub density: String,
     pub density_options: Vec<DensityOption>,
     pub baseline: Option<String>,
@@ -272,12 +235,6 @@ pub struct ResultsPackage {
     pub id: String,
     pub label: String,
     pub path: PathBuf,
-}
-
-#[derive(Debug)]
-pub struct StartupDataset {
-    pub dataset: DashboardDataset,
-    pub spawn_rebuild: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -410,25 +367,13 @@ pub fn load_startup_dataset(
     results_dir: &Path,
     rebuild: bool,
     threads: Option<usize>,
-) -> Result<StartupDataset> {
-    if rebuild {
-        return Ok(StartupDataset {
-            dataset: rebuild_raw_dataset(results_dir, threads)?,
-            spawn_rebuild: false,
-        });
+) -> Result<DashboardDataset> {
+    if !rebuild {
+        if let Some(dataset) = try_load_valid_rust_cache(results_dir)? {
+            return Ok(dataset);
+        }
     }
-
-    if let Some(dataset) = try_load_valid_rust_cache(results_dir)? {
-        return Ok(StartupDataset {
-            dataset,
-            spawn_rebuild: false,
-        });
-    }
-
-    Ok(StartupDataset {
-        dataset: rebuild_raw_dataset(results_dir, threads)?,
-        spawn_rebuild: false,
-    })
+    rebuild_raw_dataset(results_dir, threads)
 }
 
 pub fn rebuild_raw_dataset(results_dir: &Path, threads: Option<usize>) -> Result<DashboardDataset> {
@@ -458,12 +403,8 @@ pub fn build_dashboard_response(
     density: &str,
     density_options: &[DensityOption],
     requested_baseline: &str,
-    rebuild: RebuildStatus,
 ) -> DashboardResponse {
-    let mut warnings = dataset.warnings.clone();
-    if let Some(message) = rebuild.message.clone() {
-        warnings.push(message);
-    }
+    let warnings = dataset.warnings.clone();
 
     let baseline_options = baseline_option_values(&dataset.config_summary);
     let (comparison_rows, baseline) =
@@ -474,7 +415,6 @@ pub fn build_dashboard_response(
     DashboardResponse {
         cache_info: dataset.cache_info.clone(),
         warnings,
-        rebuild,
         density: density.to_string(),
         density_options: density_options.to_vec(),
         baseline,
@@ -2607,7 +2547,6 @@ scalar Scenario.node[0].wlan[0].mac packetDrop:count 0
             "custom",
             &density_options,
             "plain_netload_high",
-            RebuildStatus::idle(),
         );
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("null"));

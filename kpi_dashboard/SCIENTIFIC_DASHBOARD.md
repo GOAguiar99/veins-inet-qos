@@ -4,7 +4,7 @@ This dashboard is intended to support paper-quality analysis of the Veins QoS ex
 
 ## Interactive UI (implemented)
 
-The Rust server at `http://127.0.0.1:8050` currently exposes **four auditable tables** (comparison, config summary, run details, V2X matrix) plus cache/rebuild status. Sections 1–6 below describe the **analytical lens** for interpretation and map to exported figures — they are not separate UI tabs.
+The Rust server at `http://127.0.0.1:8050` currently exposes **four auditable tables** (comparison, config summary, run details, V2X matrix) plus cache status and a delay-distribution view. Sections 1–6 below describe the **analytical lens** for interpretation and map to exported figures — they are not separate UI tabs.
 
 ## Analytical Lenses
 

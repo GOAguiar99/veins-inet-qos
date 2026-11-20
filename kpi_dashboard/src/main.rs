@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::extract::{Query, State};
@@ -12,7 +12,7 @@ use clap::Parser;
 use kpi_dashboard::{
     build_dashboard_response, build_distribution_response, discover_results_packages,
     load_startup_dataset, DashboardDataset, DashboardResponse, DensityOption,
-    DistributionResponse, RebuildStatus, INDEX_HTML,
+    DistributionResponse, INDEX_HTML,
 };
 use serde::Deserialize;
 
@@ -44,10 +44,9 @@ struct Cli {
 
 #[derive(Clone)]
 struct AppState {
-    datasets: Arc<HashMap<String, Arc<RwLock<DashboardDataset>>>>,
+    datasets: Arc<HashMap<String, DashboardDataset>>,
     density_options: Vec<DensityOption>,
     default_density: String,
-    rebuild_status: Arc<RwLock<HashMap<String, RebuildStatus>>>,
     baseline_default: String,
 }
 
@@ -66,23 +65,15 @@ async fn main() -> Result<()> {
     }
 
     let mut datasets = HashMap::new();
-    let mut rebuild_status = HashMap::new();
     for package in &packages {
-        let startup = load_startup_dataset(&package.path, args.rebuild, args.threads)
+        let dataset = load_startup_dataset(&package.path, args.rebuild, args.threads)
             .with_context(|| {
                 format!(
                     "failed to load KPI dataset from {}",
                     package.path.display()
                 )
             })?;
-        datasets.insert(
-            package.id.clone(),
-            Arc::new(RwLock::new(startup.dataset)),
-        );
-        rebuild_status.insert(package.id.clone(), RebuildStatus::idle());
-        if startup.spawn_rebuild {
-            // Reserved for future background rebuild hooks.
-        }
+        datasets.insert(package.id.clone(), dataset);
     }
 
     let density_options: Vec<DensityOption> = packages
@@ -101,7 +92,6 @@ async fn main() -> Result<()> {
         datasets: Arc::new(datasets),
         density_options: density_options.clone(),
         default_density,
-        rebuild_status: Arc::new(RwLock::new(rebuild_status)),
         baseline_default: args.baseline,
     };
 
@@ -149,30 +139,13 @@ async fn api_dashboard(
     let dataset = state
         .datasets
         .get(&density)
-        .unwrap_or_else(|| {
-            state
-                .datasets
-                .get(&state.default_density)
-                .expect("default density exists")
-        })
-        .read()
-        .expect("dataset lock poisoned")
-        .clone();
-
-    let rebuild = state
-        .rebuild_status
-        .read()
-        .expect("rebuild lock poisoned")
-        .get(&density)
-        .cloned()
-        .unwrap_or_else(RebuildStatus::idle);
+        .expect("density validated above");
 
     Json(build_dashboard_response(
-        &dataset,
+        dataset,
         &density,
         &state.density_options,
         &baseline,
-        rebuild,
     ))
 }
 
@@ -187,10 +160,8 @@ async fn api_distributions(
     let dataset = state
         .datasets
         .get(&density)
-        .expect("density validated above")
-        .read()
-        .expect("dataset lock poisoned");
-    Json(build_distribution_response(&dataset, &density))
+        .expect("density validated above");
+    Json(build_distribution_response(dataset, &density))
 }
 
 trait ResolvePath {
